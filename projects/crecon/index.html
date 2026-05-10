@@ -11,6 +11,12 @@
     <header class="topbar">
       <h1>CRecon</h1>
       <p class="tagline">A TCP Port Scanner in C</p>
+
+      <p>
+        <a href="https://github.com/Kshitij-jj/CRecon" target="_blank">
+          🔗 GitHub Repository
+        </a>
+      </p>
     </header>
 
     <a class="back" href="../index.html">⬅ Back to Projects</a>
@@ -29,20 +35,12 @@
         <b>FILTERED</b>, similar to tools like Nmap.
       </p>
     </section>
-    <section class="card">
-      <h2>Repository</h2>
-      <p>
-        View source code on GitHub:
-        <a href="https://github.com/Kshitij-jj/CRecon" target="_blank">
-          CRecon Repository
-        </a>
-      </p>
-    </section>
+
     <section class="card">
       <h2>What This Project Taught</h2>
       <ul>
         <li>Raw socket programming in C</li>
-        <li>DNS resolution using <code>getaddrinfo()</code></li>
+        <li>DNS resolution using getaddrinfo()</li>
         <li>TCP connect-based scanning technique</li>
         <li>Network reconnaissance fundamentals</li>
         <li>Memory management and modular C design</li>
@@ -55,14 +53,13 @@
         <li>Scan single or multiple targets (IP or hostname)</li>
         <li>Automatic DNS resolution to multiple IPs</li>
         <li>Port classification: OPEN / CLOSED / FILTERED</li>
-        <li>Custom port ranges via <code>-p</code> flag</li>
+        <li>Custom port ranges via -p flag</li>
         <li>Clean scan reports per target</li>
       </ul>
     </section>
 
     <section class="card">
       <h2>Usage</h2>
-
       <pre>
 # Single target
 ./crecon 192.168.1.1
@@ -90,11 +87,7 @@
 
     <section class="card">
       <h2>How It Works</h2>
-
-      <p>
-        CRecon uses <b>TCP Connect Scanning</b>, similar to
-        <code>nmap -sT</code>.
-      </p>
+      <p>CRecon uses TCP Connect Scanning, similar to <code>nmap -sT</code>.</p>
 
       <ul>
         <li>Create TCP socket per port</li>
@@ -112,7 +105,6 @@ TIMEOUT         → FILTERED
 
     <section class="card">
       <h2>Project Structure</h2>
-
       <pre>
 C/
 ├── src/
@@ -154,7 +146,6 @@ C/
       </p>
     </section>
 
-    <!-- RESOURCES -->
     <section class="card">
       <h2>Learning Resources</h2>
       <ul>
