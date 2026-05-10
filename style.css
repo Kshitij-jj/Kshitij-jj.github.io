@@ -1,0 +1,148 @@
+body {
+  margin: 0;
+  font-family: monospace;
+  background: #0b1020;
+  color: #e5e7eb;
+}
+
+.topbar {
+  padding: 20px;
+  background: #111827;
+  border-bottom: 1px solid #1f2937;
+}
+
+.topbar h1 {
+  margin: 0;
+  color: #22c55e;
+}
+
+.tagline {
+  color: #9ca3af;
+}
+
+.hero {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.hero h2 {
+  color: #38bdf8;
+}
+
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  padding: 30px;
+}
+
+.card-link {
+  display: block;
+  padding: 25px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: white;
+  border: 1px solid #1f2937;
+  background: #111827;
+  transition: 0.2s;
+}
+
+.card-link span {
+  display: block;
+  margin-top: 8px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.card-link:hover {
+  transform: scale(1.03);
+  border-color: #38bdf8;
+}
+
+.cyber:hover {
+  box-shadow: 0 0 15px #22c55e;
+}
+
+.ai:hover {
+  box-shadow: 0 0 15px #38bdf8;
+}
+
+.quantum:hover {
+  box-shadow: 0 0 15px #a855f7;
+}
+
+.writeups:hover {
+  box-shadow: 0 0 15px #f97316;
+}
+
+.projects:hover {
+  box-shadow: 0 0 15px #facc15;
+}
+
+footer {
+  text-align: center;
+  padding: 20px;
+  color: #6b7280;
+  border-top: 1px solid #1f2937;
+}
+.back {
+  display: inline-block;
+  margin: 15px 30px;
+  color: #22c55e;
+  text-decoration: none;
+}
+
+.back:hover {
+  color: #38bdf8;
+}
+
+body {
+  margin: 0;
+  font-family: monospace;
+  background: #0b1020;
+  color: #e5e7eb;
+}
+
+section.card,
+header.topbar,
+.back {
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+section.card {
+  margin-top: 20px;
+  padding: 20px;
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+}
+
+.topbar {
+  text-align: center;
+  padding: 20px;
+  background: #111827;
+  border-bottom: 1px solid #1f2937;
+}
+
+.back {
+  display: block;
+  margin-top: 15px;
+  color: #22c55e;
+  text-decoration: none;
+  padding: 0 20px;
+}
+
+pre {
+  background: #0f172a;
+  padding: 15px;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid #1f2937;
+}
+@media (max-width: 768px) {
+  .dashboard {
+    grid-template-columns: 1fr;
+  }
+}

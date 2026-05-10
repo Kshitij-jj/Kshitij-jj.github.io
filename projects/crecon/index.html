@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CRecon | TCP Port Scanner</title>
+    <link rel="stylesheet" href="../../style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1>CRecon</h1>
+      <p class="tagline">A TCP Port Scanner in C</p>
+    </header>
+
+    <a class="back" href="../index.html">⬅ Back to Projects</a>
+
+    <section class="card">
+      <h2>About</h2>
+      <p>
+        CRecon is a lightweight TCP port scanner written in pure C. It is built
+        as part of a journey into cybersecurity and low-level network
+        programming.
+      </p>
+
+      <p>
+        It resolves hostnames using DNS, performs TCP connect scans using raw
+        sockets, and classifies ports as <b>OPEN</b>, <b>CLOSED</b>, or
+        <b>FILTERED</b>, similar to tools like Nmap.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>What This Project Taught</h2>
+      <ul>
+        <li>Raw socket programming in C</li>
+        <li>DNS resolution using <code>getaddrinfo()</code></li>
+        <li>TCP connect-based scanning technique</li>
+        <li>Network reconnaissance fundamentals</li>
+        <li>Memory management and modular C design</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Features</h2>
+      <ul>
+        <li>Scan single or multiple targets (IP or hostname)</li>
+        <li>Automatic DNS resolution to multiple IPs</li>
+        <li>Port classification: OPEN / CLOSED / FILTERED</li>
+        <li>Custom port ranges via <code>-p</code> flag</li>
+        <li>Clean scan reports per target</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Usage</h2>
+
+      <pre>
+# Single target
+./crecon 192.168.1.1
+
+# Multiple targets
+./crecon google.com 192.168.1.1
+
+# Specific ports
+./crecon 192.168.1.1 -p 80 443
+
+# Port range
+./crecon 192.168.1.1 -p 1-1024
+  </pre
+      >
+    </section>
+
+    <section class="card">
+      <h2>Tech Stack</h2>
+      <ul>
+        <li>C (POSIX standard)</li>
+        <li>TCP sockets</li>
+        <li>Linux system calls</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>How It Works</h2>
+
+      <p>
+        CRecon uses <b>TCP Connect Scanning</b>, similar to
+        <code>nmap -sT</code>.
+      </p>
+
+      <ul>
+        <li>Create TCP socket per port</li>
+        <li>Attempt connection to target IP:port</li>
+        <li>Classify result based on response</li>
+      </ul>
+
+      <pre>
+CONNECT SUCCESS → OPEN
+ECONNREFUSED    → CLOSED
+TIMEOUT         → FILTERED
+  </pre
+      >
+    </section>
+
+    <section class="card">
+      <h2>Project Structure</h2>
+
+      <pre>
+C/
+├── src/
+│   ├── main.c
+│   ├── scanner.c
+│   ├── input.c
+│   ├── output.c
+│   └── helper.c
+├── include/
+│   ├── common.h
+│   ├── scanner.h
+│   ├── input.h
+│   ├── output.h
+│   └── helper.h
+└── Makefile
+  </pre
+      >
+    </section>
+
+    <section class="card">
+      <h2>Roadmap</h2>
+      <ul>
+        <li>✔ Single target scanning</li>
+        <li>✔ Multi-target scanning</li>
+        <li>✔ Port ranges</li>
+        <li>HTML report output</li>
+        <li>Multithreading (thread pool)</li>
+        <li>Non-blocking sockets</li>
+        <li>Banner grabbing</li>
+        <li>UDP scanning</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Disclaimer</h2>
+      <p>
+        This tool is for educational and authorized penetration testing only.
+        Scanning systems without permission is illegal and unethical.
+      </p>
+    </section>
+
+    <!-- RESOURCES -->
+    <section class="card">
+      <h2>Learning Resources</h2>
+      <ul>
+        <li>Beej’s Guide to Network Programming</li>
+        <li>Nmap Documentation</li>
+        <li>TCP/IP Illustrated</li>
+        <li>The Linux Programming Interface</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Author</h2>
+      <p>
+        Kshitij — Built while exploring cybersecurity, networking, and
+        system-level C programming.
+      </p>
+
+      <blockquote>
+        “To understand security tools, you must build them yourself.”
+      </blockquote>
+    </section>
+  </body>
+</html>
