@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>select()</title>
+
+    <link rel="stylesheet" href="../../../../style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1>select()</h1>
+
+      <p class="tagline">
+        Monitoring multiple file descriptors using I/O multiplexing
+      </p>
+    </header>
+
+    <a class="back" href="../index.html"> ⬅ I/O Multiplexing </a>
+
+    <section class="card">
+      <h2>Introduction</h2>
+
+      <p>
+        <code>select()</code> is a classic I/O multiplexing system call that
+        allows one thread to monitor multiple file descriptors.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Syntax</h2>
+
+      <pre>
+<code>#include &lt;sys/select.h&gt;
+
+int select(
+    int nfds,
+    fd_set *readfds,
+    fd_set *writefds,
+    fd_set *exceptfds,
+    struct timeval *timeout
+);</code>
+      </pre>
+    </section>
+
+    <section class="card">
+      <h2>Parameters</h2>
+
+      <table>
+        <tr>
+          <th>Parameter</th>
+          <th>Description</th>
+        </tr>
+
+        <tr>
+          <td>nfds</td>
+          <td>Highest file descriptor number + 1.</td>
+        </tr>
+
+        <tr>
+          <td>readfds</td>
+          <td>Descriptors monitored for reading.</td>
+        </tr>
+
+        <tr>
+          <td>writefds</td>
+          <td>Descriptors monitored for writing.</td>
+        </tr>
+
+        <tr>
+          <td>exceptfds</td>
+          <td>Descriptors monitored for errors.</td>
+        </tr>
+
+        <tr>
+          <td>timeout</td>
+          <td>Maximum time select() waits.</td>
+        </tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>FD_SET Macros</h2>
+
+      <pre>
+<code>FD_ZERO()
+FD_SET()
+FD_CLR()
+FD_ISSET()</code>
+      </pre>
+
+      <ul>
+        <li><code>FD_ZERO()</code> clears a set.</li>
+        <li><code>FD_SET()</code> adds a descriptor.</li>
+        <li><code>FD_CLR()</code> removes a descriptor.</li>
+        <li><code>FD_ISSET()</code> checks readiness.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Workflow</h2>
+
+      <ol>
+        <li>Create sockets.</li>
+        <li>Add descriptors into <code>fd_set</code>.</li>
+        <li>Call <code>select()</code>.</li>
+        <li>Check ready descriptors.</li>
+        <li>Handle ready sockets and repeat.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Visualization</h2>
+
+      <pre>
+<code>
+Client 1 ----\
+Client 2 ----- select() ---- Server
+Client 3 ----/
+</code>
+      </pre>
+    </section>
+
+    <section class="card">
+      <h2>Advantages</h2>
+
+      <ul>
+        <li>Single thread handles multiple clients.</li>
+        <li>Reduces CPU usage.</li>
+        <li>Avoids busy polling.</li>
+        <li>Portable across Unix-like systems.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Limitations</h2>
+
+      <ul>
+        <li>Limited by <code>FD_SETSIZE</code>.</li>
+        <li>Not efficient for huge numbers of connections.</li>
+        <li><code>fd_set</code> must be rebuilt every loop.</li>
+        <li>Uses linear scanning.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Next Technique</h2>
+
+      <p>
+        The next technique is
+        <a href="../poll/index.html"><code>poll()</code></a>
+      </p>
+    </section>
+  </body>
+</html>

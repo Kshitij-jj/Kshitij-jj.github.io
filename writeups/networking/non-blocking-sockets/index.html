@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Non-Blocking Sockets</title>
+
+    <link rel="stylesheet" href="../../../style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1>Non-Blocking Sockets</h1>
+
+      <p class="tagline">
+        Understanding asynchronous socket communication in networking
+      </p>
+    </header>
+
+    <a class="back" href="../../index.html">⬅ Writeups</a>
+
+    <section class="card">
+      <h2>What is a Non-Blocking Socket?</h2>
+
+      <p>
+        A non-blocking socket is a socket mode where system calls such as
+        <code>accept()</code> and <code>recv()</code> do not pause program
+        execution while waiting for an event.
+      </p>
+
+      <p>
+        Instead of blocking until data arrives or a client connects, these
+        system calls return immediately.
+      </p>
+
+      <p>
+        If no event is currently available, the calls return
+        <code>-1</code> and set <code>errno</code> to <code>EAGAIN</code> or
+        <code>EWOULDBLOCK</code>.
+      </p>
+
+      <p>
+        This allows the program to continue executing other tasks instead of
+        being stuck waiting on a single socket operation.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>How Non-Blocking Behavior Works</h2>
+
+      <p>
+        In blocking mode, the kernel pauses execution until an operation can
+        complete.
+      </p>
+
+      <p>
+        In non-blocking mode, the kernel immediately returns control back to the
+        program.
+      </p>
+
+      <p>If no event is ready:</p>
+
+      <ul>
+        <li>
+          <code>recv()</code> returns <code>-1</code> with
+          <code>EAGAIN</code> or <code>EWOULDBLOCK</code>
+        </li>
+
+        <li>
+          <code>accept()</code> returns <code>-1</code> with
+          <code>EAGAIN</code> or <code>EWOULDBLOCK</code>
+        </li>
+      </ul>
+
+      <p>
+        The program must check again later instead of waiting automatically.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Creating a Non-Blocking Socket</h2>
+
+      <p>
+        Non-blocking behavior is usually enabled using
+        <code>fcntl()</code>.
+      </p>
+
+      <pre><code>
+// Make server socket non-blocking
+int flags = fcntl(server_fd, F_GETFL, 0);
+fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
+
+socket();
+bind();
+listen();
+
+while (1) {
+
+    client_fd = accept(server_fd,
+                       (struct sockaddr *)&client_addr,
+                       &addr_len);
+
+    if (client_fd == -1) {
+        // No pending connection
+        continue;
+    }
+
+    // Make client socket non-blocking too
+    int client_flags = fcntl(client_fd, F_GETFL, 0);
+    fcntl(client_fd, F_SETFL, client_flags | O_NONBLOCK);
+
+    recv(client_fd, buffer, sizeof(buffer), 0);
+}
+      </code></pre>
+
+      <p>
+        Unlike blocking sockets, the server continues running even when no
+        client connection or incoming data is available.
+      </p>
+
+      <p>
+        <a
+          href="https://github.com/Kshitij-jj/Accessories/tree/main/Non-Blocking-tcp-server-client"
+        >
+          View full code on GitHub
+        </a>
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Blocking vs Non-Blocking</h2>
+
+      <pre><code>
+Blocking:
+  accept() → waits
+  recv()   → waits
+
+Non-blocking:
+  accept() → returns immediately
+  recv()   → returns immediately
+      </code></pre>
+
+      <p>Blocking sockets pause execution until work becomes available.</p>
+
+      <p>
+        Non-blocking sockets never pause execution automatically; the program
+        must repeatedly check whether sockets are ready.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Why Non-Blocking Sockets Are Used</h2>
+
+      <p>
+        Non-blocking sockets allow a single thread to manage multiple
+        connections without getting stuck waiting on any one operation.
+      </p>
+
+      <p>
+        This improves responsiveness and forms the foundation of event-driven
+        networking systems.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>The Problem with Pure Non-Blocking I/O</h2>
+
+      <p>
+        Since non-blocking system calls return immediately, the program must
+        continuously check sockets in a loop.
+      </p>
+
+      <pre><code>
+while (1) {
+
+    accept(server_fd, ...);
+
+    recv(client_fd, buffer, sizeof(buffer), 0);
+
+    // Loop repeats immediately again and again
+}
+      </code></pre>
+
+      <p>
+        Because no system call blocks execution, the CPU keeps running the loop
+        repeatedly even when no network activity exists.
+      </p>
+
+      <p>
+        This behavior is called <strong>busy waiting</strong> or
+        <strong>busy polling</strong>.
+      </p>
+
+      <p>
+        In such cases, the program may consume nearly 100% CPU usage while doing
+        no useful work.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Why is usleep(1000) Used?</h2>
+
+      <p>
+        If you check the server code in the repository, you may notice the
+        following statement:
+      </p>
+
+      <pre><code>
+usleep(1000);
+      </code></pre>
+
+      <p>
+        <code>usleep(1000)</code> pauses the current thread for
+        <code>1000</code> microseconds, which equals <code>1 millisecond</code>.
+      </p>
+
+      <p>
+        This small delay prevents the loop from running continuously at maximum
+        speed and reduces unnecessary CPU usage.
+      </p>
+
+      <p>
+        Without this delay, the program would repeatedly execute the loop
+        millions of times per second because no operation inside the loop blocks
+        execution.
+      </p>
+
+      <p>
+        Although this reduces CPU usage slightly, manually polling sockets in a
+        loop is still inefficient and does not scale well.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>What Comes Next?</h2>
+
+      <p>
+        Non-blocking sockets solve the waiting problem, but they introduce a new
+        issue: inefficient CPU usage caused by constant polling.
+      </p>
+
+      <p>
+        Instead of manually checking every socket repeatedly, modern networking
+        systems use <strong>I/O Multiplexing</strong>.
+      </p>
+
+      <p>
+        With techniques such as <code>select()</code>, <code>poll()</code>, and
+        <code>epoll()</code>, the kernel notifies the program exactly when
+        sockets become ready for reading or writing.
+      </p>
+
+      <p>
+        This eliminates unnecessary polling and allows applications to handle
+        many connections efficiently.
+      </p>
+
+      <a href="../io-multiplexing/select/index.html">
+        Next → I/O Multiplexing (select, poll, epoll)
+      </a>
+    </section>
+  </body>
+</html>

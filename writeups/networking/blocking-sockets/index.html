@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Blocking Sockets</title>
+
+    <link rel="stylesheet" href="../../../style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1>Blocking Sockets</h1>
+
+      <p class="tagline">
+        Understanding synchronous socket communication in networking
+      </p>
+    </header>
+
+    <a class="back" href="../../index.html">⬅ Writeups</a>
+
+    <section class="card">
+      <h2>Introduction</h2>
+
+      <p>
+        Sockets are a fundamental abstraction provided by the operating system
+        that allow communication between two processes over a network.
+      </p>
+
+      <p>
+        Any data sent between devices over a network—such as messages, requests,
+        or file transfers—uses sockets as the communication interface.
+      </p>
+
+      <p>
+        In simple terms, a socket is one endpoint of a two-way communication
+        channel between two programs running over a network.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>What is a Blocking Socket?</h2>
+
+      <p>
+        A blocking socket is a socket mode where system calls like
+        <code>accept()</code> and <code>recv()</code> pause program execution
+        until the operation completes.
+      </p>
+
+      <p>
+        For example, <code>recv()</code> will block the program until data is
+        received from the other side. Similarly, <code>accept()</code> blocks
+        until a new client connects.
+      </p>
+
+      <p>
+        This means the program cannot perform any other task while waiting for
+        an event to occur.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Simple TCP Server and Client</h2>
+
+      <p>
+        A basic blocking socket program consists of a server and a client. The
+        server waits for a connection, and the client connects and sends data.
+      </p>
+
+      <pre><code>
+// Server (blocking)
+socket()
+bind()
+listen()
+
+client = accept()   // blocks until client connects
+recv(client)        // blocks until data arrives
+send(client)
+      </code></pre>
+
+      <p>This setup works well for a single client connection.</p>
+
+      <p>
+        <a
+          href="https://github.com/Kshitij-jj/Accessories/tree/main/Blocking-tcp-server-client"
+        >
+          View full code on GitHub
+        </a>
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>How Execution Flow Works</h2>
+
+      <p>
+        In blocking mode, the server executes in a linear fashion and waits at
+        specific system calls.
+      </p>
+
+      <pre><code>
+Client -----> Server
+
+accept()  → waiting for connection
+recv()    → waiting for data
+      </code></pre>
+
+      <p>
+        The execution stops at each blocking call until the kernel returns
+        control.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Why Blocking Sockets Are Useful</h2>
+
+      <p>
+        Blocking sockets are simple, predictable, and easy to implement. The
+        flow of execution is linear, which makes debugging and learning much
+        easier.
+      </p>
+
+      <p>This is why most beginners start networking with blocking sockets.</p>
+    </section>
+
+    <section class="card">
+      <h2>The Problem with Blocking Servers</h2>
+
+      <p>
+        The main limitation appears when multiple clients try to connect at the
+        same time.
+      </p>
+
+      <p>
+        Since the server is blocked on one client at a time, it cannot handle
+        other clients until the current operation finishes.
+      </p>
+
+      <p>This leads to poor scalability in real-world applications.</p>
+    </section>
+
+    <section class="card">
+      <h2>Handling Multiple Clients</h2>
+
+      <p>
+        A common solution is to use threads or processes, where each client is
+        handled independently.
+      </p>
+
+      <p>
+        However, this introduces new problems such as higher memory usage,
+        context switching overhead, and reduced scalability when the number of
+        clients increases.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Why This Becomes a Problem at Scale</h2>
+
+      <p>
+        In real-world systems like web servers, chat servers, and scanners,
+        thousands of clients may connect simultaneously.
+      </p>
+
+      <p>
+        A blocking approach cannot efficiently handle this load because the
+        server spends time waiting instead of doing useful work.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>What Comes Next?</h2>
+
+      <p>Blocking sockets are simple and useful, but they do not scale well.</p>
+
+      <p>
+        This raises an important question:
+        <strong
+          >Can we avoid waiting while still handling multiple clients?</strong
+        >
+      </p>
+
+      <p>To solve this, we move to non-blocking sockets.</p>
+
+      <a href="../non-blocking-sockets/index.html">
+        Next → Non-blocking Sockets
+      </a>
+    </section>
+  </body>
+</html>

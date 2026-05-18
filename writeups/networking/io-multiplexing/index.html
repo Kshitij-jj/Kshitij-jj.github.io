@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Input-Output Multiplexing</title>
+
+    <link rel="stylesheet" href="../../../style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1>Input-Output Multiplexing</h1>
+
+      <p class="tagline">
+        Understanding asynchronous socket communication in networking
+      </p>
+    </header>
+
+    <a class="back" href="../../../index.html">⬅ Writeups</a>
+
+    <section class="card">
+      <h2>Introduction</h2>
+
+      <p>
+        I/O multiplexing is a way for one thread to manage many I/O channels
+        (like sockets or files) at once, instead of blocking on just one.
+      </p>
+
+      <p>
+        It lets the program wait for “which one is ready now” and process only
+        the ready channels.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Concept</h2>
+
+      <p>
+        Instead of blocking on one channel or busy-polling many channels, I/O
+        multiplexing allows a single thread to supervise multiple I/O channels
+        simultaneously.
+      </p>
+
+      <ul>
+        <li>
+          The program gives the kernel a list of file descriptors to monitor.
+        </li>
+
+        <li>
+          The thread blocks once inside a multiplexing syscall like
+          <code>select()</code> or <code>poll()</code>.
+        </li>
+
+        <li>
+          The kernel wakes the program only when one or more descriptors become
+          ready.
+        </li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Why Do We Need It?</h2>
+
+      <p>
+        Blocking I/O wastes the thread while waiting. Non-blocking I/O avoids
+        blocking but can lead to busy polling.
+      </p>
+
+      <p>
+        I/O multiplexing solves both problems efficiently using a single thread.
+      </p>
+
+      <ul>
+        <li>Avoids one thread per socket.</li>
+        <li>Avoids busy polling.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Different Techniques</h2>
+
+      <ul>
+        <li>
+          <a href="./select/index.html"><code>select()</code></a>
+        </li>
+
+        <li>
+          <a href="./poll/index.html"><code>poll()</code></a>
+        </li>
+        <li>
+          <a href="./epoll/index.html"><code>epoll()</code></a>
+        </li>
+      </ul>
+    </section>
+  </body>
+</html>
