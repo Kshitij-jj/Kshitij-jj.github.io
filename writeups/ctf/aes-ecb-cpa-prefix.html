@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>AES-ECB Byte-at-a-Time Decryption (Prefix-Only)</title>
+
+    <link rel="stylesheet" href="../../style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1>AES-ECB Byte-at-a-Time Decryption (Prefix-Only)</h1>
+
+      <p class="tagline">
+        Chosen-plaintext attacks against ECB mode when you can only prepend data
+      </p>
+    </header>
+
+    <a class="back" href="../index.html">⬅ Writeups</a>
+
+    <section class="card">
+      <h2>The Problem</h2>
+
+      <p>
+        Consider a service that holds a secret value — a token, a key, a flag,
+        anything sensitive — and offers you one operation: send some data of
+        your choosing, and the service will encrypt
+        <code>your_data + secret</code> using AES in ECB mode with a fixed,
+        unknown key, then hand you back the ciphertext.
+      </p>
+
+      <p>
+        You never see the key. You never see the secret in plaintext. You only
+        see ciphertext, and you can only influence what comes
+        <em>before</em> the secret — never after it. The question is: can the
+        secret be recovered anyway, purely from the ciphertext you're given
+        back?
+      </p>
+
+      <p>
+        This is a well-known class of challenge in applied cryptography and
+        CTF-style exercises, generally referred to as a
+        <strong>byte-at-a-time ECB decryption</strong> problem. It shows up any
+        time an oracle exists that (a) uses ECB mode and (b) appends a fixed
+        secret after attacker-controlled input.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Why ECB Mode Is the Root Cause</h2>
+
+      <p>
+        AES is a block cipher — it only knows how to encrypt fixed-size blocks
+        (16 bytes for AES). To encrypt something longer, a
+        <em>mode of operation</em> decides how to chain those blocks together.
+      </p>
+
+      <p>
+        <strong>ECB (Electronic Codebook)</strong> is the simplest possible
+        mode: each 16-byte block is encrypted completely independently, using
+        the same key, with no interaction between blocks at all. This has one
+        very dangerous consequence:
+      </p>
+
+      <p>
+        <strong
+          >Identical plaintext blocks always produce identical ciphertext
+          blocks, every time, under the same key.</strong
+        >
+      </p>
+
+      <p>
+        That single property is enough to turn the encryption oracle into a
+        comparison oracle — if I can force two plaintext blocks to be
+        byte-for-byte identical, I can detect that fact just by comparing the
+        ciphertext, without ever knowing the key.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Why "Prefix-Only" Makes It Harder</h2>
+
+      <p>
+        A softer version of this problem lets you place chosen plaintext
+        anywhere — before <em>and</em> after the secret. That makes it easy to
+        build a full "codebook": encrypt every possible single byte in a known
+        position, and just look up which known ciphertext block matches.
+      </p>
+
+      <p>
+        In the prefix-only version, that shortcut is gone. The secret is always
+        appended immediately after whatever you send — you have no way to place
+        known plaintext <em>after</em> it. The only variable left under your
+        control is <strong>how much filler you send before the secret</strong>,
+        which changes how the secret's bytes fall relative to 16-byte block
+        boundaries.
+      </p>
+
+      <p>
+        That turns out to be exactly enough of a lever to pull off the same
+        style of attack — but it requires a bit more care in how the attack is
+        structured, since alignment now has to be managed deliberately rather
+        than being free.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>The General Strategy</h2>
+
+      <p>
+        The high-level idea, without getting into a specific implementation,
+        looks like this:
+      </p>
+
+      <ul>
+        <li>
+          Choose a prefix length that places exactly one unknown byte of the
+          secret at the very last position of some 16-byte block, with every
+          other byte in that block already known to you.
+        </li>
+        <li>
+          Ask the oracle to encrypt that prefix. The ciphertext of that specific
+          block becomes your <em>reference</em> — it silently encodes the
+          correct unknown byte, because the oracle appends the real secret for
+          you.
+        </li>
+        <li>
+          Now try every possible byte value (256 possibilities for a single
+          byte) in that same position yourself, keeping everything else in the
+          block identical to the reference case. Whichever guess produces a
+          matching ciphertext block <em>is</em> the correct byte — because ECB
+          guarantees equal plaintext blocks encrypt to equal ciphertext blocks.
+        </li>
+        <li>
+          Record that byte as known, adjust your prefix length to keep the next
+          unknown byte pinned to the same position in the same block, and
+          repeat.
+        </li>
+      </ul>
+
+      <p>
+        Done carefully, this recovers the secret one byte at a time, entirely
+        from ciphertext comparisons, without ever needing the key.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>My Exploit Script</h2>
+
+      <p>
+        Here's the actual script I used to recover the secret, built around
+        pwntools. It maintains the invariant described above:
+        <code>len(data) + len(known)</code> stays constant across every round,
+        which keeps the byte under test pinned to the same position in the same
+        ciphertext block for the entire attack.
+      </p>
+
+      <pre><code>#!/bin/python3
+from pwn import *
+
+def get_ciphermsg(p, data):
+    p.sendlineafter(b"Data? ", data.encode().hex().encode())
+    cipher_txt = p.recvline().split()[-1][96:128]
+    return cipher_txt
+
+def guess_byte(p, data):
+    p.sendlineafter(b"Data? ", data.encode().hex().encode())
+    cipher_txt = p.recvline().split()[-1][96:128]
+    return cipher_txt
+
+def equal(msg1, msg2):
+    return msg1 == msg2
+
+known = ''
+data = "A" * 63
+finish = False
+p = process("/challenge/run")
+
+while True:
+    cipher_flag = get_ciphermsg(p, data)
+    for i in range(32, 127):
+        cipher_msg = guess_byte(p, data + known + chr(i))
+        if equal(cipher_flag, cipher_msg):
+            print(f"Found: {chr(i)}")
+            known = known + chr(i)
+            if chr(i) == '}':
+                finish = True
+            data = data[:-1]
+            break
+    if finish:
+        break
+
+print(f"Flag: {known}")</code></pre>
+
+      <p>A few implementation notes:</p>
+
+      <ul>
+        <li>
+          <code>data = "A" * 63</code> places the first unknown byte at the last
+          position of a fixed 16-byte block. The slice
+          <code>[96:128]</code> pulls exactly that block out of the hex-encoded
+          ciphertext (hex offset 96–128 corresponds to byte offset 48–64).
+        </li>
+        <li>
+          <code>get_ciphermsg</code> is called with <code>data</code> alone —
+          not <code>data + known</code> — since the oracle appends the real
+          secret automatically, which already supplies the bytes matching what's
+          been recovered so far.
+        </li>
+        <li>
+          <code>guess_byte</code> is called with
+          <code>data + known + chr(i)</code>, since this is the only call that
+          needs the recovered bytes plus a candidate byte to build a full
+          attacker-controlled block for comparison.
+        </li>
+        <li>
+          Every successful match shrinks <code>data</code> by one character,
+          preserving the invariant and keeping the target byte aligned to the
+          same block for the whole run.
+        </li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>The Subtlety That's Easy to Get Wrong</h2>
+
+      <p>
+        The trickiest part of this attack isn't the brute-force loop — it's
+        correctly reasoning about what the oracle appends versus what you need
+        to supply yourself.
+      </p>
+
+      <p>
+        It's tempting to assume that once you've recovered some bytes of the
+        secret, you need to manually re-supply those known bytes when building
+        your <em>reference</em> ciphertext. But if the oracle always appends the
+        real secret in full, it's already doing that for you — the real secret
+        naturally starts with exactly the bytes you've already recovered,
+        followed by the next unknown one.
+      </p>
+
+      <p>
+        Mixing recovered bytes into both the reference call and the guess call
+        desynchronizes the comparison and silently breaks the attack. The fix is
+        to keep the reference call as filler-only, and reserve recovered bytes
+        plus the current guess for the comparison call exclusively.
+      </p>
+
+      <p>
+        This distinction — what the oracle supplies for free versus what you
+        must supply yourself — is the single most common source of bugs in this
+        style of attack, and worth thinking through carefully before writing any
+        code.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Why the Approach Generalizes</h2>
+
+      <p>
+        A clean way to think about alignment is to maintain an invariant: the
+        amount of filler you send plus the number of bytes you've already
+        recovered should sum to a constant. If that sum never changes, the
+        position of the byte currently under test never moves relative to block
+        boundaries — which means you don't need to track or shift which block
+        you're inspecting at all, for as long as your filler budget lasts.
+      </p>
+
+      <p>
+        Once the filler runs out, the same idea can be extended into the next
+        block by re-establishing a fresh invariant one block further along — the
+        core technique doesn't change, only the bookkeeping does.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Lessons Learned</h2>
+
+      <p>
+        ECB mode should never be used for anything beyond a single independent
+        block of data — its determinism leaks structural information about the
+        plaintext even without breaking the underlying cipher itself. Any oracle
+        that lets an attacker control a prefix in front of a fixed secret,
+        combined with ECB, is sufficient for full byte-by-byte recovery.
+      </p>
+
+      <p>
+        On the debugging side, the most useful technique when something breaks
+        in an oracle-based attack like this is to write out, literally, the
+        exact byte sequence the server is constructing on each call — rather
+        than reasoning about it abstractly. Tracing the actual concatenation
+        order is usually enough to spot where a reference and a guess have
+        quietly gone out of alignment.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Conclusion</h2>
+
+      <p>
+        Prefix-only ECB decryption is a slightly harder variant of the classic
+        byte-at-a-time ECB attack, but the underlying weakness is identical: a
+        block cipher mode with no chaining, combined with any amount of
+        attacker-controlled input ahead of a secret, is enough to leak that
+        secret one byte at a time — no key recovery required.
+      </p>
+
+      <p>
+        The original challenge's oracle source is intentionally left out of this
+        writeup, since that part of the material belongs to the platform it came
+        from rather than to my own work. The script above is my own exploit
+        code, included so readers can see a concrete, working implementation of
+        the technique described.
+      </p>
+    </section>
+  </body>
+</html>
