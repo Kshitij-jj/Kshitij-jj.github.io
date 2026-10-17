@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About — Kshitij Ban</title>
+  <meta name="description" content="Who Kshitij Ban is, what he builds, the tools he uses, and where he's heading." />
+
+  <!-- OG -->
+  <meta property="og:title" content="About — Kshitij Ban" />
+  <meta property="og:description" content="Who Kshitij Ban is, what he builds, the tools he uses, and where he's heading." />
+  <meta property="og:url" content="https://kshitij-jj.github.io/about.html" />
+  <meta property="og:type" content="website" />
+
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+  <header>
+    <h1>About</h1>
+    <p class="tagline">Who I am, and what I'm building toward</p>
+  </header>
+
+  <div class="back-wrap">
+    <a class="back" href="./index.html">&#x2B05; Home</a>
+  </div>
+
+  <main class="content">
+
+    <!-- Card 1: Who I Am -->
+    <div class="content-card">
+      <div class="avatar">KB</div>
+      <h2>Who I Am</h2>
+      <p>
+        I'm Kshitij — a CS student in Nepal working toward a career in security research
+        and exploit development. Self-taught, working independently: no bootcamp, no
+        structured course — just building things until I understand them, then breaking
+        them to understand deeper.
+      </p>
+    </div>
+
+    <!-- Card 2: What I Work On -->
+    <div class="content-card">
+      <h2>What I Work On</h2>
+      <ul>
+        <li>
+          <strong>Network protocol implementation</strong> — built a C shared library
+          (<code>libmylib</code>) implementing Ethernet, ARP, IPv4, UDP, and DNS from
+          scratch — including Internet checksums, raw socket management, and frame
+          parsing/crafting byte by byte
+        </li>
+        <li>
+          <strong>Binary analysis</strong> — ELF parser that reads section headers,
+          program headers, type mappings, and the string table directly from the binary
+          format without using libelf
+        </li>
+        <li>
+          <strong>Assembly programming</strong> — wrote a working HTTP server in pure
+          x86-64 Intel-syntax assembly: no libc, no C runtime, just syscalls — handles
+          GET/POST, forks per client, serves files (from a pwn.college challenge,
+          extended independently)
+        </li>
+        <li>
+          <strong>Exploit development (learning)</strong> — actively working through
+          pwn.college; hands-on experience overwriting return addresses to redirect
+          control flow; studying stack exploitation techniques
+        </li>
+        <li>
+          <strong>Cryptography attacks</strong> — AES-ECB byte-at-a-time oracle, CBC
+          bit flipping, RSA signature forgery
+        </li>
+        <li>
+          <strong>Network tools</strong> — packet sniffer and ARP frame crafter built on
+          top of <code>libmylib</code>, dissecting live traffic at the Ethernet frame level
+        </li>
+      </ul>
+    </div>
+
+    <!-- Card 3: Tools -->
+    <div class="content-card">
+      <h2>Tools I Actually Use</h2>
+      <div class="tags">
+        <span>GDB / pwndbg</span>
+        <span>objdump</span>
+        <span>readelf</span>
+        <span>strace</span>
+        <span>ltrace</span>
+        <span>Wireshark</span>
+        <span>tcpdump</span>
+        <span>gcc</span>
+        <span>make</span>
+        <span>Linux</span>
+      </div>
+    </div>
+
+    <!-- Card 4: Where I Practice -->
+    <div class="content-card">
+      <h2>Where I Practice</h2>
+      <p>
+        Actively working through <strong>pwn.college</strong> — binary exploitation,
+        shellcoding, reverse engineering. The writeups on this site come directly from
+        that work.
+      </p>
+    </div>
+
+    <!-- Card 5: Where This Is Going -->
+    <div class="content-card">
+      <h2>Where This Is Going</h2>
+      <p>
+        The long-term goal is security research and exploit development — vulnerability
+        research, binary exploitation, and contributing to autonomous vulnerability
+        discovery. Everything on this site is a step toward that, documented honestly
+        as it happens.
+      </p>
+    </div>
+
+    <!-- Card 6: Other Things Built -->
+    <div class="content-card">
+      <h2>Other Things Built</h2>
+      <p>
+        Built a Solana blockchain tender transparency tracker (React/TypeScript frontend +
+        on-chain Anchor logic) as a hackathon project — proof that I can ship full products
+        when the goal demands it. It's not the focus of this site.
+      </p>
+    </div>
+
+  </main>
+
+  <footer>
+    <p>&copy; 2026 Kshitij Ban</p>
+    <p>
+      <a href="/about.html">About</a> &middot;
+      <a href="/contact.html">Contact</a> &middot;
+      <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+    </p>
+  </footer>
+
+</body>
+</html>

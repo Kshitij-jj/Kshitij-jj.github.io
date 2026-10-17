@@ -3,23 +3,115 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Projects</title>
-    <link rel="stylesheet" href="../style.css" />
-  </head>
+    <title>Projects — Kshitij Ban</title>
+    <meta
+      name="description"
+      content="Projects by Kshitij Ban — C network library, assembly HTTP server, ELF parser, port scanner, and web crawler."
+    />
 
+    <!-- OG -->
+    <meta property="og:title" content="Projects — Kshitij Ban" />
+    <meta
+      property="og:description"
+      content="Projects by Kshitij Ban — C network library, assembly HTTP server, ELF parser, port scanner, and web crawler."
+    />
+    <meta property="og:url" content="https://kshitij-jj.github.io/projects/" />
+    <meta property="og:type" content="website" />
+
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="../style.css" />
+
+    <style>
+      /* 5-card grid: 2×2 then last card centered */
+      .dashboard.projects-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .dashboard.projects-grid .card-last {
+        grid-column: 1 / -1;
+        max-width: 420px;
+        margin: 0 auto;
+        width: 100%;
+      }
+
+      @media (max-width: 580px) {
+        .dashboard.projects-grid .card-last {
+          grid-column: auto;
+          max-width: 100%;
+          margin: 0;
+        }
+      }
+    </style>
+  </head>
   <body>
-    <header class="topbar">
+    <header>
       <h1>Projects</h1>
-      <p class="tagline">All builds • Experiments • Tools</p>
+      <p class="tagline">Things I've built — documented honestly</p>
     </header>
 
-    <a class="back" href="../index.html">⬅ Home</a>
+    <div class="back-wrap">
+      <a class="back" href="../index.html">&#x2B05; Home</a>
+    </div>
 
-    <section class="dashboard">
-      <a class="card-link cyber" href="./crecon/index.html">
-        🔍 CRecon
-        <span>Reconnaissance tool (C project)</span>
+    <main class="dashboard projects-grid">
+      <a class="nav-card" href="./libmylib/index.html">
+        <div class="card cyber">
+          <span class="card-icon">⚡</span>
+          <span class="card-title">libmylib</span>
+          <span class="card-sub"
+            >C network library &middot; Ethernet &middot; ARP &middot; IPv4
+            &middot; UDP</span
+          >
+        </div>
       </a>
-    </section>
+
+      <a class="nav-card" href="./assembly-server/index.html">
+        <div class="card writeups">
+          <span class="card-icon">🔩</span>
+          <span class="card-title">Assembly HTTP Server</span>
+          <span class="card-sub">HTTP server in pure x86-64 assembly</span>
+        </div>
+      </a>
+
+      <a class="nav-card" href="./elf-parser/index.html">
+        <div class="card contact">
+          <span class="card-icon">🔬</span>
+          <span class="card-title">ELF Parser</span>
+          <span class="card-sub"
+            >Binary analysis &middot; Section headers &middot; No libelf</span
+          >
+        </div>
+      </a>
+
+      <a class="nav-card" href="./crecon/index.html">
+        <div class="card projects">
+          <span class="card-icon">🔍</span>
+          <span class="card-title">CRecon</span>
+          <span class="card-sub"
+            >TCP port scanner &middot; Non-blocking sockets</span
+          >
+        </div>
+      </a>
+
+      <!-- 5th card — spans full width, centered -->
+      <a class="nav-card card-last" href="./neurocrawl/index.html">
+        <div class="card about">
+          <span class="card-icon">🕸</span>
+          <span class="card-title">neurocrawl</span>
+          <span class="card-sub"
+            >C web crawler &middot; OSINT layer &middot; In design</span
+          >
+        </div>
+      </a>
+    </main>
+
+    <footer>
+      <p>&copy; 2026 Kshitij Ban</p>
+      <p>
+        <a href="/about.html">About</a> &middot;
+        <a href="/contact.html">Contact</a> &middot;
+        <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+      </p>
+    </footer>
   </body>
 </html>

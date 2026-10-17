@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Reverse engineering notes and CTF writeups — decompiling binaries, file format headers, and understanding program intent."
+    />
+    <title>Reverse Engineering | Kshitij Ban</title>
+    <link rel="stylesheet" href="../../../style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1>Reverse Engineering</h1>
+      <p class="tagline">Decompiling binaries • Understanding intent</p>
+    </header>
+
+    <a class="back" href="../index.html">⬅ Back to CTF</a>
+
+    <section class="card">
+      <h2>What Is Reverse Engineering</h2>
+      <p>
+        Reverse engineering is the art of decompiling a binary file using
+        various reverse engineering techniques and tools to understand the
+        intent of the program.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Binary File Structure</h2>
+      <p>
+        A binary file is just a bunch of binary data, which usually contains a
+        header describing the overall structure a loader needs before it can be
+        turned into a process. The header typically contains a magic number
+        identifying the file format type.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>CTFs</h2>
+      <ul>
+        <li>
+          <a href="./ctf-01.html">
+            CTF 1 — Passing a security check that validates file format header
+            length and magic number
+          </a>
+        </li>
+      </ul>
+    </section>
+  </body>
+</html>
