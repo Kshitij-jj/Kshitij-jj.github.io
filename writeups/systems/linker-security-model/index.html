@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Linker Security Model — Kshitij Ban</title>
+  <meta name="description" content="Notes on how the linker and loader work under the hood, and how that machinery becomes an attack surface. PLT/GOT, RELRO, PIE/ASLR, NX, LD_PRELOAD." />
+
+  <meta property="og:title" content="Linker Security Model — Kshitij Ban" />
+  <meta property="og:description" content="Notes on PLT/GOT lazy binding, RELRO, PIE/ASLR, NX, ret2libc, and building a working LD_PRELOAD malloc logger from scratch." />
+  <meta property="og:url" content="https://kshitij-jj.github.io/writeups/systems/linker-security-model/" />
+  <meta property="og:type" content="article" />
+
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="../../../style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <style>
+    .meta {
+      color: var(--muted, #9ca3af);
+      font-size: 0.8rem;
+      margin-bottom: 6px;
+    }
+
+    .content-card + .content-card {
+      margin-top: 20px;
+    }
+
+    .content-card h2 {
+      color: var(--blue, #38bdf8);
+      font-size: 1.05rem;
+      margin-bottom: 14px;
+    }
+
+    .content-card p {
+      color: #d1d5db;
+      font-size: 0.92rem;
+      line-height: 1.8;
+      margin-bottom: 12px;
+    }
+
+    .content-card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .confusion-box {
+      border-left: 3px solid #f97316;
+      background: #1a1508;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #fbbf24;
+      line-height: 1.7;
+    }
+
+    .confusion-box strong {
+      color: #f97316;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .todo-box {
+      border-left: 3px solid #a855f7;
+      background: #12091a;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #c084fc;
+      line-height: 1.7;
+    }
+
+    .todo-box strong {
+      color: #a855f7;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .insight-box {
+      border-left: 3px solid #22c55e;
+      background: #081208;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #86efac;
+      line-height: 1.7;
+    }
+
+    .insight-box strong {
+      color: #22c55e;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .toc {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .toc li a {
+      color: var(--blue, #38bdf8);
+      font-size: 0.88rem;
+      text-decoration: none;
+    }
+
+    .toc li a:hover {
+      text-decoration: underline;
+    }
+
+    .toc li::before {
+      content: "→ ";
+      color: var(--muted, #9ca3af);
+    }
+
+    code {
+      background: #0f172a;
+      color: #22c55e;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.88em;
+      border: 1px solid #1f2937;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border: none;
+      font-size: inherit;
+    }
+
+    @media (max-width: 768px) {
+      .content-card { margin-left: 12px; margin-right: 12px; padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Linker Security Model</h1>
+    <p class="tagline">Notes from Block 1.3 — Week 2</p>
+  </header>
+
+  <div class="back-wrap">
+    <a class="back" href="../../index.html">⬅ Back to Writeups</a>
+  </div>
+
+  <main class="content">
+
+    <!-- Intro -->
+    <div class="content-card">
+      <p class="meta">October 2026 · pwn.college — systems / binary</p>
+      <p>
+        This week was all about how the linker and loader actually work under the hood,
+        and specifically how that machinery becomes an attack surface. Started knowing
+        basically nothing beyond "lazy binding happens, dynamic linker finds it, GOT caches
+        it" — the gist, no mechanism. Ended up with GDB / readelf / strace proof for all of it.
+        Writing this down mostly so future me doesn't have to re-derive it from scratch again.
+      </p>
+
+      <ul class="toc">
+        <li><a href="#plt-got">PLT / GOT — why a function call needs all this</a></li>
+        <li><a href="#eager">Eager binding / <code>-z now</code></a></li>
+        <li><a href="#relro">RELRO — Partial vs Full</a></li>
+        <li><a href="#pie-aslr">PIE / ASLR</a></li>
+        <li><a href="#nx">NX and ret2libc</a></li>
+        <li><a href="#ldpreload">LD_PRELOAD — built a working malloc logger</a></li>
+        <li><a href="#wx">mmap / mprotect / W^X</a></li>
+      </ul>
+    </div>
+
+    <!-- PLT/GOT -->
+    <div class="content-card" id="plt-got">
+      <h2>PLT / GOT — why does a function call even need all this</h2>
+
+      <p>
+        First confusion was just: why can't the compiler hardcode the address of <code>puts</code>?
+        Turns out it can't, for two reasons — <code>puts</code> lives in libc, a separate file, so
+        your binary doesn't contain it at all, and libc loads at a different address every run
+        because of ASLR anyway. So the call can't point at a fixed address, it has to point at
+        a <em>pointer that gets filled in at runtime</em>.
+      </p>
+
+      <p>
+        That pointer lives in the <strong>GOT</strong> (global offset table) — just an array of
+        8-byte slots in writable memory. Your code doesn't call <code>puts</code> directly, it
+        calls through a tiny stub in <code>.plt</code>:
+      </p>
+
+      <pre><code class="language-nasm">puts@plt:
+    jmp QWORD PTR [rip+0x2fe2]   ; jump to whatever address is stored in the GOT slot</code></pre>
+
+      <div class="confusion-box">
+        <strong>confusion I had</strong>
+        The <code>[rip+...]</code> thing confused me at first — it means "read 8 bytes FROM this
+        address and jump there," not "jump to this address." Big difference. The stub reads the
+        slot's <em>contents</em>, and those contents decide the behavior — there's no branching
+        logic in the stub itself.
+      </div>
+
+      <p>
+        On the <strong>first call ever</strong> to <code>puts</code>: the GOT slot doesn't hold
+        <code>puts</code>'s real address yet. It holds the address of the next instruction in the
+        same stub — basically a placeholder that says "not resolved yet, go run the resolver."
+        That falls through to <code>push &lt;index&gt;</code> (so the resolver knows which function
+        it's dealing with), then jumps to PLT0, which calls into <code>ld.so</code>'s
+        <code>_dl_runtime_resolve</code>. The resolver reads <code>.rela.plt[index]</code> (where
+        to write the answer) and <code>.dynsym</code> / <code>.dynstr</code> (what symbol to look
+        up as a string), finds the real address in libc, and writes it into the GOT slot.
+      </p>
+
+      <p>
+        Every call after that: the stub reads the slot, it's already the real libc address,
+        jumps straight there. No resolver involved again. That's lazy binding.
+      </p>
+    </div>
+
+    <!-- Eager binding -->
+    <div class="content-card" id="eager">
+      <h2>Eager binding / <code>-z now</code></h2>
+
+      <p>
+        If the resolver writes to the GOT at runtime, that page has to be writable for at
+        least part of the process's life. The question that actually unlocked RELRO for me was:
+        when exactly does it need to stop being writable?
+      </p>
+
+      <div class="confusion-box">
+        <strong>wrong framing I started with</strong>
+        My first instinct was "a function can get called any time, so there's no point locking it down." The
+        GOT needs to stay writable only until every <em>unresolved</em> slot gets resolved — not indefinitely.
+        If you force all symbols to resolve up front, the GOT becomes a pure read-only lookup table for
+        the rest of the process's life.
+      </div>
+
+      <p>
+        That's what <code>-z now</code> (<code>gcc -Wl,-z,now</code>) does — forces all symbols to
+        resolve before <code>main()</code> even starts, instead of waiting for first-use.
+        Confirmed it two ways:
+      </p>
+
+      <p>
+        <code>readelf -d</code> shows <code>FLAGS_1: NOW</code> (declared intent, build-time fact).
+        Then in GDB, breaking at <code>main()</code> and reading the actual GOT slot for
+        <code>puts</code> with <code>x/gx</code> — without <code>-z now</code> it holds an address
+        inside my own binary's <code>.text</code> (the stub fallback path). With <code>-z now</code>
+        it already holds a real libc address before <code>main</code> ran at all. Empirically proved,
+        not just read about it.
+      </p>
+    </div>
+
+    <!-- RELRO -->
+    <div class="content-card" id="relro">
+      <h2>RELRO — Partial vs Full</h2>
+
+      <p>
+        <strong>Full RELRO</strong> is <code>-z now</code> (eager resolution) plus
+        <code>ld.so</code> calling <code>mprotect(.got.plt, size, PROT_READ)</code> right before
+        handing control to <code>main()</code>. Verified this with
+        <code>strace -e trace=mprotect</code> — saw the actual syscall, <code>PROT_READ</code>
+        only, on my binary's own GOT page. This is not something my own code calls —
+        <code>ld.so</code> is the only thing that could possibly know "resolution just finished"
+        and already has the address and size on hand, since it read <code>PLTGOT</code> /
+        <code>PLTRELSZ</code> from <code>.dynamic</code> to do the resolving in the first place.
+      </p>
+
+      <p>
+        <strong>Partial RELRO</strong> (the default) keeps the GOT writable forever, because lazy
+        binding needs ongoing writes to slots <code>ld.so</code> can't predict in advance. But
+        stuff that's written once at build or load time and never touched again —
+        <code>.init_array</code>, <code>.fini_array</code>, <code>GOT[0..2]</code> (the reserved
+        bookkeeping slots) — still gets locked read-only, since none of that needs lazy binding to
+        keep working. The linker deliberately puts these on a separate page from
+        <code>.got.plt</code>, because <code>mprotect</code> only works at page granularity —
+        you can't protect 24 bytes while leaving the other 8 on the same page writable.
+      </p>
+
+      <div class="confusion-box">
+        <strong>mistake I made</strong>
+        I initially read <code>FLAGS_1: NOW</code> backwards and called it Partial RELRO.
+        <code>NOW</code> present means eager binding was requested — that's Full RELRO's
+        prerequisite, not the opposite.
+      </div>
+    </div>
+
+    <!-- PIE / ASLR -->
+    <div class="content-card" id="pie-aslr">
+      <h2>PIE / ASLR</h2>
+
+      <p>
+        PIE binaries have no fixed load address — every address in the file is an offset, and
+        the kernel picks a random load base per region at <code>execve()</code> time, so
+        <code>real_address = load_base + file_offset</code>.
+      </p>
+
+      <div class="confusion-box">
+        <strong>GDB gotcha</strong>
+        GDB disables ASLR by default for anything it launches (<code>show disable-randomization</code>
+        → on). Spent a while confused why two GDB sessions of the same binary gave identical
+        addresses — wasn't observing ASLR at all, just GDB's own reproducibility feature.
+        Real ASLR only shows up running outside GDB, independently.
+      </div>
+
+      <p>
+        Entropy is <code>/proc/sys/vm/mmap_rnd_bits</code> — 28 bits on x86-64. 2^28 ≈ 268M
+        possibilities sounds like a lot but isn't brute-forceable blind over a network —
+        unless there's an info leak. One leaked pointer collapses the entire 28 bits to zero,
+        since you can compute every other address in that region from one known offset (literally
+        the same arithmetic I used by hand to find the GOT in GDB). That's the real lesson —
+        ASLR is a tax on attackers with zero information, not a wall.
+      </p>
+
+      <div class="insight-box">
+        <strong>actually interesting</strong>
+        <code>fork()</code>-based servers reuse the same randomized layout across every child
+        (COW, same page table structure, inherited from one <code>execve()</code>), so an attacker
+        gets a crash/success oracle against a <em>fixed</em> target across many connections — real
+        technique, called BROP. <code>exec()</code>-per-connection servers re-roll ASLR every time,
+        so there's no oracle to accumulate against.
+      </div>
+    </div>
+
+    <!-- NX -->
+    <div class="content-card" id="nx">
+      <h2>NX and ret2libc</h2>
+
+      <p>
+        NX — the hardware no-execute bit — means data pages (stack, heap, GOT) can't be marked
+        executable, so "write shellcode onto the stack, jump to it" doesn't work anymore. The CPU
+        just refuses to fetch instructions from that page.
+      </p>
+
+      <p>
+        Doesn't close the door, just moves it. You can still corrupt a return address — NX says
+        nothing about <em>writing</em> it, only about executing from wherever it points. If you
+        can only point it at already-executable, already-existing code, the simplest useful target
+        is a real libc function like <code>system()</code>, with the stack arranged so it gets
+        your chosen argument. That's <strong>ret2libc</strong>.
+      </p>
+
+      <div class="confusion-box">
+        <strong>correction I got</strong>
+        <code>system()</code> is a libc function, not a syscall. Syscalls don't go through the
+        GOT/PLT at all — they're a different mechanism entirely.
+      </div>
+    </div>
+
+    <!-- LD_PRELOAD -->
+    <div class="content-card" id="ldpreload">
+      <h2>LD_PRELOAD — built a working malloc / free / realloc / calloc logger</h2>
+
+      <p>
+        <code>LD_PRELOAD=/path/to/x.so</code> is an environment variable <code>ld.so</code> reads
+        before it even looks at the binary's own declared dependencies, and inserts
+        <code>x.so</code> at the front of the library search order. So if <code>x.so</code>
+        exports its own <code>malloc</code>, every call to <code>malloc</code> anywhere in the
+        target program resolves to that version instead of glibc's — first-match wins, same rule
+        as the GOT resolver, just applied to which library gets searched first.
+      </p>
+
+      <p>
+        Building an interposer — a logger that wraps <code>malloc</code> / <code>free</code> /
+        <code>realloc</code> / <code>calloc</code>, logs the call, then still does the real
+        allocation — ran into three separate recursion traps, each one genuinely surprising until
+        traced through:
+      </p>
+
+      <p>
+        <strong>The obvious one:</strong> if my <code>malloc()</code>'s body calls
+        <code>malloc()</code> again to get the real allocation, that just calls itself again
+        (same first-match resolution rule), infinite recursion, stack overflow. Fix:
+        <code>dlsym(RTLD_NEXT, "malloc")</code> — a real userspace function (not a syscall, just
+        walks <code>ld.so</code>'s own link_map) that explicitly means "find the next match after me."
+      </p>
+
+      <p>
+        <strong>Less obvious:</strong> my interposed <code>malloc</code> logging with
+        <code>printf()</code> internally calls <code>malloc()</code> too (buffer for formatting),
+        which resolves back to my malloc, which calls <code>printf</code> again — same recursion.
+        Fix: <code>snprintf</code> into a stack buffer and raw <code>write()</code> syscall
+        instead — no <code>FILE*</code> stream, no hidden allocation.
+      </p>
+
+      <p>
+        <strong>The one I'd never have guessed without being told:</strong> <code>dlsym()</code>
+        itself, on glibc, internally calls <code>calloc()</code> for its own bookkeeping the
+        first time it resolves a symbol. So the very first call to my interposed
+        <code>calloc</code> triggers <code>dlsym</code>, which calls <code>calloc</code> again,
+        which — since <code>real_calloc</code> isn't set yet — tries to resolve via
+        <code>dlsym</code> again. Fixed with a static "currently inside dlsym" flag that, when
+        set, serves a few zeroed bytes from a small preallocated static buffer instead of
+        recursing. Had to separately fix integer overflow in <code>total * size</code> (classic
+        <code>calloc</code> overflow bug class, real CVEs from exactly this) and get the
+        check-before-commit ordering right — compute nothing, touch no shared state, until both
+        the overflow check and the capacity check pass.
+      </p>
+
+      <pre><code class="language-c">/* dlsym bootstrap buffer — avoids calloc recursion during dlsym init */
+static char   dlsym_buf[4096];
+static int    dlsym_in_use = 0;
+
+void *calloc(size_t nmemb, size_t size) {
+    if (dlsym_in_use) {
+        /* serve from static buffer; size is always tiny during dlsym */
+        return memset(dlsym_buf, 0, sizeof(dlsym_buf));
+    }
+    if (!real_calloc) {
+        dlsym_in_use = 1;
+        real_calloc = dlsym(RTLD_NEXT, "calloc");
+        dlsym_in_use = 0;
+    }
+    /* overflow check before anything else */
+    if (nmemb && size > SIZE_MAX / nmemb) { errno = ENOMEM; return NULL; }
+    void *ptr = real_calloc(nmemb, size);
+    log_call("calloc", ptr, nmemb * size);
+    return ptr;
+}</code></pre>
+
+      <p>
+        Tested the whole thing against <code>/bin/ls</code> — worked, real log output
+        interleaved with <code>ls</code>'s actual directory listing. The interleaving itself
+        taught me something unplanned: my <code>write()</code> is unbuffered (fires immediately,
+        syscall every time), but <code>ls</code>'s own output goes through buffered
+        <code>printf</code> / streams (batches, flushes on buffer full, explicit flush, or exit).
+        That's why the log lines and the real <code>ls</code> output don't interleave
+        character-by-character — they show up as separate chunks depending on when each side
+        actually flushes.
+      </p>
+
+      <div class="todo-box">
+        <strong>still TODO — being honest</strong>
+        The spec also wants bin classification (which free-list a chunk would land in —
+        fast / tcache / large / mmap) and double-free detection. Built bin classification
+        separately in a chunk inspector that reads raw chunk headers and decodes safe-linking
+        by hand, but haven't merged it into the interposer yet, and double-free detection
+        isn't built. Turns out "walk the tcache and check if the pointer's already there" is
+        actually weaker than glibc's own built-in tcache <code>key</code> check, which itself
+        has a known gap (fastbin overflow past tcache's 7-per-bin cap has no key field at all).
+        The real fix needs the interposer to keep its own independent bookkeeping of
+        freed-but-not-reallocated pointers — queued up for later.
+      </div>
+    </div>
+
+    <!-- mmap / W^X -->
+    <div class="content-card" id="wx">
+      <h2>mmap / mprotect / W^X</h2>
+
+      <p>
+        <code>mprotect</code> only changes permissions on memory that's already mapped by
+        something else. <code>mmap</code> can create a brand new mapping from nothing —
+        including anonymous mappings with no backing file at all (<code>MAP_ANONYMOUS</code>),
+        which is what most of those blank-filename <code>rw-p</code> rows in
+        <code>/proc/&lt;pid&gt;/maps</code> actually are.
+      </p>
+
+      <p>
+        The "a page is writable XOR executable, never both" rule is called <strong>W^X</strong>.
+        JIT compilers (V8, HotSpot, etc.) legitimately need to write fresh machine code and then
+        run it — they do this safely in two steps: <code>mmap</code> with
+        <code>PROT_READ|PROT_WRITE</code>, write the bytes, then <code>mprotect</code> to flip
+        it to <code>PROT_READ|PROT_EXEC</code> right before jumping in. At no point is the page
+        both writable and executable.
+      </p>
+
+      <div class="insight-box">
+        <strong>red flag to watch for</strong>
+        If you ever see a standing <code>rwxp</code> region in a real process's memory map,
+        that's either sloppy JIT / debugger-instrumentation design or active exploitation —
+        worth investigating either way, since it completely collapses NX's whole purpose the
+        moment an attacker gets any write into it.
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    <p>© 2026 Kshitij Ban</p>
+    <p>
+      <a href="/about.html">About</a> ·
+      <a href="/contact.html">Contact</a> ·
+      <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+    </p>
+  </footer>
+
+  <script>hljs.highlightAll();</script>
+</body>
+</html>
