@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Practice Tools — Kshitij Ban</title>
+  <link rel="stylesheet" href="../../style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+  <style>
+    .tool-section {
+      border-left: 3px solid #4a9eff;
+      padding-left: 1.2rem;
+      margin: 2rem 0;
+    }
+    .tool-tag {
+      display: inline-block;
+      background: #1e2a3a;
+      color: #4a9eff;
+      font-size: 0.78rem;
+      padding: 2px 8px;
+      border-radius: 3px;
+      margin: 0 4px 6px 0;
+      font-family: monospace;
+    }
+    .note-box {
+      border-left: 3px solid #f0a500;
+      background: #1e1a0e;
+      padding: 0.8rem 1rem;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+    }
+    .insight-box {
+      border-left: 3px solid #3dba6f;
+      background: #0e1e14;
+      padding: 0.8rem 1rem;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+    }
+    .toc {
+      background: #111;
+      border: 1px solid #222;
+      padding: 1rem 1.4rem;
+      margin: 1.5rem 0 2rem;
+      display: inline-block;
+      min-width: 280px;
+    }
+    .toc h3 {
+      margin: 0 0 0.6rem;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #aaa;
+    }
+    .toc ol {
+      margin: 0;
+      padding-left: 1.2rem;
+    }
+    .toc li {
+      margin: 0.25rem 0;
+    }
+    .toc a {
+      color: #4a9eff;
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+    .toc a:hover {
+      text-decoration: underline;
+    }
+    pre code {
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="../../index.html">Home</a> ·
+    <a href="../../projects/index.html">Projects</a> ·
+    <a href="../../writeups/index.html">Writeups</a> ·
+    <a href="../../contact.html">Contact</a>
+  </nav>
+
+  <main>
+    <header>
+      <p class="label">Projects / Practice</p>
+      <h1>Network &amp; Heap Practice Tools</h1>
+      <p class="subtitle">
+        A collection of small C tools I built while learning how things actually work at the OS and protocol level —
+        packet parsing, ARP, heap internals, and malloc interception via LD_PRELOAD.
+        None of these are polished utilities, they're exploration tools I wrote to prove to myself that I understood something.
+      </p>
+      <p style="color:#888; font-size:0.88rem;">Built on Linux (x86-64) · Uses <a href="../libmylib/index.html">libmylib</a> for networking primitives</p>
+    </header>
+
+    <div class="toc">
+      <h3>Contents</h3>
+      <ol>
+        <li><a href="#malloc-logger">malloc / free Logger (LD_PRELOAD)</a></li>
+        <li><a href="#heap-inspector">Heap Inspector</a></li>
+        <li><a href="#packet-sniffer">Packet Sniffer</a></li>
+        <li><a href="#arp-scanner">ARP Scanner</a></li>
+      </ol>
+    </div>
+
+    <!-- ─── 1. malloc logger ─── -->
+    <section id="malloc-logger" class="tool-section">
+      <h2>1 · malloc / free Logger (LD_PRELOAD)</h2>
+      <span class="tool-tag">LD_PRELOAD</span>
+      <span class="tool-tag">dlsym</span>
+      <span class="tool-tag">interposition</span>
+      <span class="tool-tag">shared library</span>
+
+      <p>
+        This came directly out of the linker security model notes I was writing. I understood the theory of LD_PRELOAD
+        — the dynamic linker searches your preloaded library before libc, so you can shadow any symbol — but I wanted
+        to actually build it and see what breaks. So I did.
+      </p>
+
+      <p>
+        The idea is simple: compile a shared library that defines its own <code>malloc</code>, <code>free</code>,
+        <code>realloc</code>, and <code>calloc</code>. Each wrapper grabs the real libc function via
+        <code>dlsym(RTLD_NEXT, "malloc")</code>, calls it, logs the call to stdout, and returns the result.
+        Then you preload it with <code>LD_PRELOAD=./logger.so ./some_program</code> and you get a full trace
+        of every heap allocation the program makes, without touching its source.
+      </p>
+
+      <pre><code class="language-bash"># build
+gcc -shared -fPIC -o logger.so logger.c -ldl
+
+# run against anything
+LD_PRELOAD=./logger.so ls
+LD_PRELOAD=./logger.so ./tmp</code></pre>
+
+      <h3>The calloc bootstrap problem</h3>
+      <p>
+        The interesting part was calloc. <code>dlsym</code> itself internally calls <code>calloc</code>
+        before it returns — so when my calloc wrapper runs and tries to call <code>dlsym(RTLD_NEXT, "calloc")</code>
+        to find the real calloc, dlsym calls back into my calloc again, which tries to call dlsym again,
+        and you get infinite recursion and a segfault. Classic bootstrapping problem.
+      </p>
+
+      <p>
+        The fix is a small static fallback buffer. If <code>dlsym</code> calls calloc before real_calloc
+        has been resolved yet, instead of recursing, you serve the allocation from a 512-byte static char
+        array on the first call. Once dlsym finishes and returns the real calloc, all future calls go
+        through the real one normally. I also added a <code>__builtin_mul_overflow</code> check on the
+        fallback path since it's doing manual size arithmetic.
+      </p>
+
+      <pre><code class="language-c">void *calloc(size_t total, size_t size)
+{
+    static void *(*real_calloc)(size_t, size_t) = NULL;
+    static int in_dlsym = 0;
+
+    if (!real_calloc)
+    {
+        if (in_dlsym)
+        {
+            /* dlsym called us before we resolved real_calloc.
+               serve from a static fallback buffer instead of recursing. */
+            static size_t used = 0;
+            static char fallback[512];
+
+            size_t bytes;
+            if (__builtin_mul_overflow(total, size, &bytes))
+                return NULL;
+            if (used + bytes > sizeof(fallback))
+                return NULL;
+
+            void *p = fallback + used;
+            used += bytes;
+            memset(p, 0, bytes);
+            return p;
+        }
+        in_dlsym = 1;
+        real_calloc = dlsym(RTLD_NEXT, "calloc");
+        in_dlsym = 0;
+    }
+
+    void *tmp = real_calloc(total, size);
+    char buf[1024] = {0};
+    int n = snprintf(buf, sizeof(buf), "calloc(%zu, %zu) = %p\n", total, size, tmp);
+    write(1, buf, n);
+    return tmp;
+}</code></pre>
+
+      <div class="insight-box">
+        One thing worth noting: I'm using <code>write(1, buf, n)</code> instead of <code>printf</code> for
+        the logging. That's intentional — <code>printf</code> itself may call <code>malloc</code> internally,
+        so using it inside a malloc wrapper risks reentrancy issues and infinite loops. <code>write</code> is
+        a raw syscall, no heap involvement.
+      </div>
+
+      <div class="note-box">
+        <strong>What's not done yet:</strong> I want to add tracking for double-free detection and allocation
+        size classification (small / large / mmap'd). The logger currently just prints and returns — it doesn't
+        maintain any state about live allocations. That's a future thing.
+      </div>
+    </section>
+
+    <!-- ─── 2. heap inspector ─── -->
+    <section id="heap-inspector" class="tool-section">
+      <h2>2 · Heap Inspector</h2>
+      <span class="tool-tag">ptmalloc2</span>
+      <span class="tool-tag">chunk metadata</span>
+      <span class="tool-tag">tcache</span>
+      <span class="tool-tag">fastbin</span>
+
+      <p>
+        After reading about glibc's heap internals (ptmalloc2), I wanted to be able to look at a live chunk
+        and tell what state it's in — allocated, freed into tcache, freed into fastbin, or mmap'd — without
+        just guessing. This tool does that by reading the chunk metadata directly from memory.
+      </p>
+
+      <p>
+        Every malloc chunk in ptmalloc2 has a header sitting 8–16 bytes before the pointer you get back.
+        The header contains the chunk size in the upper bits and three flags in the low 3 bits: P (previous
+        chunk in use), M (mmap'd), and A (non-main arena). The chunk after it also has a size field, and
+        whether its P bit is set tells you if the current chunk is considered "in use" by the allocator.
+      </p>
+
+      <pre><code class="language-c">void inspect(void *p, void *first)
+{
+    uint8_t flag;
+    uint64_t prev_size, size, next_size;
+
+    size      = *(((unsigned long *)p) - 1);   /* header: 8 bytes before user ptr */
+    flag      = size & 0x7;                    /* bottom 3 bits = P, M, A flags   */
+    size      = size & 0xfffffffffffffff8;     /* mask off flags to get real size  */
+    next_size = *(unsigned long int *)((char *)p - 16 + size + 8);
+
+    if (flag == 0x2) { /* M bit set = mmap'd, not in the arena */ }
+
+    if ((next_size & 0x1) == 0)
+    {
+        /* next chunk's P bit is clear = this chunk is freed */
+    }
+    /* ... tcache check by walking the tcache linked list ... */
+}</code></pre>
+
+      <p>
+        The tcache check is the more interesting part. Glibc's tcache is a per-thread singly-linked list,
+        one per size class (sizes 0x20–0x410 in steps of 0x10). The counts and entry pointers live at a
+        fixed offset before the first allocation in the arena. To check if a chunk is in tcache, I walk
+        the linked list for its size class and compare pointers. The safe-linking XOR that glibc adds
+        (to detect corrupted list pointers) has to be undone manually: <code>next = (ptr >> 12) ^ stored</code>.
+      </p>
+
+      <div class="note-box">
+        This is fragile — it relies on knowing the exact internal layout of <code>tcache_perthread_struct</code>,
+        which is a glibc implementation detail. Works on the version I tested against; not guaranteed across
+        versions. That's kind of the point though — understanding what the allocator is actually doing
+        underneath, not just the public API.
+      </div>
+    </section>
+
+    <!-- ─── 3. packet sniffer ─── -->
+    <section id="packet-sniffer" class="tool-section">
+      <h2>3 · Packet Sniffer</h2>
+      <span class="tool-tag">raw sockets</span>
+      <span class="tool-tag">AF_PACKET</span>
+      <span class="tool-tag">Ethernet</span>
+      <span class="tool-tag">ARP / IPv4 / UDP / DNS</span>
+
+      <p>
+        This is a packet sniffer I built on top of libmylib's networking layer. It opens a raw
+        <code>AF_PACKET</code> socket on <code>eth0</code>, then loops reading frames directly off the wire
+        — full Ethernet frames including the headers, before any protocol stack processing. For each frame
+        it parses the Ethernet header, then branches on the EtherType to handle ARP (0x0806) or IPv4
+        (0x0800) specifically.
+      </p>
+
+      <p>
+        For IPv4 packets it goes deeper: parses the IP header to get source/destination addresses and the
+        transport protocol, then if it's UDP it parses the UDP segment (including checksum validation with
+        a carve-out for checksum offload on outgoing frames), and if the port is 53 it tries to parse it
+        as DNS and prints the query/response details including A record answers.
+      </p>
+
+      <pre><code class="language-bash">sudo ./sniff   # needs root for AF_PACKET</code></pre>
+
+      <p>
+        One thing I ran into: <code>getsockname</code> / <code>getpeername</code> don't tell you the
+        interface MAC or IP for a raw socket — you have to use <code>ioctl(SIOCGIFHWADDR)</code> and
+        <code>ioctl(SIOCGIFADDR)</code>. That's what <code>net_get_mac</code> and <code>net_get_ip</code>
+        in mylib wrap. Also, the DNS parser only handles A records (IPv4 addresses) right now — anything
+        else gets silently skipped.
+      </p>
+    </section>
+
+    <!-- ─── 4. ARP scanner ─── -->
+    <section id="arp-scanner" class="tool-section">
+      <h2>4 · ARP Scanner</h2>
+      <span class="tool-tag">ARP</span>
+      <span class="tool-tag">raw sockets</span>
+      <span class="tool-tag">LAN discovery</span>
+
+      <p>
+        The ARP scanner does a /24 host discovery: takes an interface name, figures out the interface's own
+        IP and MAC, then blasts ARP requests to every address from .1 to .254 (skipping itself), and listens
+        for replies with a timeout. Anything that responds gets printed as <code>&lt;ip&gt; is at &lt;mac&gt;</code>.
+      </p>
+
+      <p>
+        The frame construction approach is efficient — it builds the full Ethernet + ARP frame once, then for
+        each iteration just increments the last byte of the destination IP field directly in the buffer via
+        a pointer. No re-marshaling the whole thing 254 times.
+      </p>
+
+      <pre><code class="language-c">/* build frame once */
+u8 *point_last = tmp - 1;           /* pointer to last byte of target IP */
+u8 mine        = *point_last;       /* our own last octet, skip it */
+
+for (counter = 1; counter &lt; 255; counter++)
+{
+    *point_last = counter;          /* mutate target IP in-place */
+    if (counter == mine) continue;  /* don't ARP ourselves */
+    sendto(fd, frame, total, 0, (struct sockaddr *)(&addr), sizeof(addr));
+}</code></pre>
+
+      <p>
+        After the send loop, it switches to a receive loop with a 1.5 second timeout (<code>SO_RCVTIMEO</code>).
+        When the timeout fires, <code>recv</code> returns -1 with <code>errno == EAGAIN</code>, which is
+        the signal that the scan is done rather than an actual error. Anything else on -1 is a real failure.
+      </p>
+
+      <p>
+        I also built a simpler <code>arp.c</code> before this — same idea but hardcoded MACs and IPs,
+        just to make sure I understood how to construct and send a raw ARP request manually before
+        making it dynamic.
+      </p>
+    </section>
+
+    <hr style="border-color:#222; margin: 2.5rem 0;" />
+    <p style="color:#666; font-size:0.88rem;">
+      All of these are Linux-only (raw sockets, /proc, glibc internals). Built and tested on x86-64 Debian in a VM.
+    </p>
+  </main>
+
+  <footer>
+    <a href="../../about.html">About</a> ·
+    <a href="../../contact.html">Contact</a> ·
+    <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+  </footer>
+</body>
+</html>
