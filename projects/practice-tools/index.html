@@ -100,6 +100,8 @@
         <li><a href="#heap-inspector">Heap Inspector</a></li>
         <li><a href="#packet-sniffer">Packet Sniffer</a></li>
         <li><a href="#arp-scanner">ARP Scanner</a></li>
+        <li><a href="#dns-resolver">Raw Python DNS Resolver</a></li>
+        <li><a href="#format-string">Format-String Target &amp; Exploit Harness</a></li>
       </ol>
     </div>
 
@@ -329,6 +331,87 @@ for (counter = 1; counter &lt; 255; counter++)
         I also built a simpler <code>arp.c</code> before this — same idea but hardcoded MACs and IPs,
         just to make sure I understood how to construct and send a raw ARP request manually before
         making it dynamic.
+      </p>
+    </section>
+
+    <!-- ─── 5. raw python dns resolver ─── -->
+    <section id="dns-resolver" class="tool-section">
+      <h2>5 · Raw Python DNS Resolver</h2>
+      <span class="tool-tag">Python</span>
+      <span class="tool-tag">ctypes</span>
+      <span class="tool-tag">UDP sockets</span>
+      <span class="tool-tag">RFC 1035</span>
+
+      <p>
+        I wanted to see how DNS queries and answers look on the wire without using third-party DNS packages
+        like <code>dnspython</code> or <code>scapy</code>. So I wrote <code>dns.py</code> using Python's standard
+        <code>socket</code> and <code>ctypes</code> modules.
+      </p>
+
+      <p>
+        The header is defined as a <code>ctypes.BigEndianStructure</code> so that multi-byte integers are serialized
+        directly into network byte order. The domain name is encoded manually into standard length-prefixed QNAME
+        format (e.g. <code>google.com</code> becomes <code>6google3com0</code>). The query is sent over a standard
+        UDP socket to <code>8.8.8.8:53</code>.
+      </p>
+
+      <pre><code class="language-python">class DNS_HDR(ctypes.BigEndianStructure):
+    _fields_ = [
+        ("ID", ctypes.c_ushort),
+        ("FLAGS", ctypes.c_ushort),
+        ("QDCOUNT", ctypes.c_ushort),
+        ("ANCOUNT", ctypes.c_ushort),
+        ("NSCOUNT", ctypes.c_ushort),
+        ("ARCOUNT", ctypes.c_ushort)
+    ]</code></pre>
+
+      <p>
+        The parser handles RFC 1035 message compression pointers: if a label starts with the <code>0xC0</code> bitmask,
+        it treats the field as a 2-byte pointer offset rather than an ordinary label length. It also validates inputs,
+        detects NXDOMAIN, and uses an explicit <code>socket.timeout</code> handler instead of a generic catch-all exception.
+      </p>
+
+      <p>
+        Full technical notes are documented in the <a href="../../writeups/systems/python-security-scripting/index.html#dns-resolver">Python Security Scripting writeup</a>.
+      </p>
+    </section>
+
+    <!-- ─── 6. format-string target & harness ─── -->
+    <section id="format-string" class="tool-section">
+      <h2>6 · Format-String Vulnerability &amp; Exploit Harness</h2>
+      <span class="tool-tag">C</span>
+      <span class="tool-tag">pwntools</span>
+      <span class="tool-tag">format strings</span>
+      <span class="tool-tag">x86-64 ABI</span>
+
+      <p>
+        To practice memory leaks and format-string bug mechanics, I built a small C target (<code>vunl.c</code>) that passes
+        user input directly into <code>printf(buf)</code>, and an automated Python exploit script (<code>attack.py</code>)
+        using <code>pwntools</code>.
+      </p>
+
+      <pre><code class="language-c">void vunl()
+{
+    char buf[64];
+    long secet = 0xdeadbeef;
+    printf("Buf: %p, Secret: %p\n", buf, &amp;secet);
+    fgets(buf, sizeof(buf), stdin);
+    printf(buf);  /* vulnerable */
+}</code></pre>
+
+      <p>
+        The pwntools script constructs an indexed payload like <code>1:%lx 2:%lx 3:%lx ...</code> to probe the process state.
+        Under the System V AMD64 ABI, the first 5 arguments after the format string are pulled from registers
+        (<code>rsi, rdx, rcx, r8, r9</code>), and argument 6 onward starts reading memory off the stack frame.
+      </p>
+
+      <div class="insight-box">
+        Running this through <code>pwntools.process()</code> originally hung due to stdio buffering over pipes. Adding
+        <code>setvbuf(stdout, NULL, _IONBF, 0)</code> to the C program eliminated the pipe deadlock.
+      </div>
+
+      <p>
+        Full analysis and address fingerprinting are detailed in the <a href="../../writeups/systems/python-security-scripting/index.html#vulnerable-target">Python Security Scripting writeup</a>.
       </p>
     </section>
 

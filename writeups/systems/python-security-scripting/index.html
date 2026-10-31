@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Python for Security Scripting — Kshitij Ban</title>
+  <meta name="description" content="Notes from Block 1.4: Building a raw DNS resolver from scratch with ctypes, and exploiting a format-string vulnerability with pwntools." />
+
+  <meta property="og:title" content="Python for Security Scripting — Kshitij Ban" />
+  <meta property="og:description" content="Raw socket DNS query crafting, compression parsing, x86-64 register argument exhaustion, stdio buffering deadlocks, and format-string leaks." />
+  <meta property="og:url" content="https://kshitij-jj.github.io/writeups/systems/python-security-scripting/" />
+  <meta property="og:type" content="article" />
+
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="../../../style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+
+  <style>
+    .meta {
+      color: var(--muted, #9ca3af);
+      font-size: 0.8rem;
+      margin-bottom: 6px;
+    }
+
+    .content-card + .content-card {
+      margin-top: 20px;
+    }
+
+    .content-card h2 {
+      color: var(--blue, #38bdf8);
+      font-size: 1.05rem;
+      margin-bottom: 14px;
+    }
+
+    .content-card p {
+      color: #d1d5db;
+      font-size: 0.92rem;
+      line-height: 1.8;
+      margin-bottom: 12px;
+    }
+
+    .content-card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .confusion-box {
+      border-left: 3px solid #f97316;
+      background: #1a1508;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #fbbf24;
+      line-height: 1.7;
+    }
+
+    .confusion-box strong {
+      color: #f97316;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .todo-box {
+      border-left: 3px solid #a855f7;
+      background: #12091a;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #c084fc;
+      line-height: 1.7;
+    }
+
+    .todo-box strong {
+      color: #a855f7;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .insight-box {
+      border-left: 3px solid #22c55e;
+      background: #081208;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #86efac;
+      line-height: 1.7;
+    }
+
+    .insight-box strong {
+      color: #22c55e;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .toc {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .toc li a {
+      color: var(--blue, #38bdf8);
+      font-size: 0.88rem;
+      text-decoration: none;
+    }
+
+    .toc li a:hover {
+      text-decoration: underline;
+    }
+
+    .toc li::before {
+      content: "→ ";
+      color: var(--muted, #9ca3af);
+    }
+
+    code {
+      background: #0f172a;
+      color: #22c55e;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.88em;
+      border: 1px solid #1f2937;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border: none;
+      font-size: inherit;
+    }
+
+    @media (max-width: 768px) {
+      .content-card { margin-left: 12px; margin-right: 12px; padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Python for Security Scripting</h1>
+    <p class="tagline">Notes from Block 1.4 — Protocols, Raw Sockets &amp; Exploitation Leaks</p>
+  </header>
+
+  <div class="back-wrap">
+    <a class="back" href="../../index.html">⬅ Back to Writeups</a>
+  </div>
+
+  <main class="content">
+
+    <!-- Intro -->
+    <div class="content-card">
+      <p class="meta">October 2026 · Systems / Exploit Dev</p>
+      <p>
+        In this block I moved into Python for security work. The point was not to rely on heavy third-party libraries like <code>scapy</code> or high-level network wrappers, but to build things from the ground up using raw sockets, <code>ctypes</code>, and standard Unix primitives.
+      </p>
+      <p>
+        I focused on two main exercises: building a working DNS resolver completely from scratch without DNS libraries, and writing a format-string exploit in <code>pwntools</code> against a vulnerable C binary I wrote and compiled.
+      </p>
+
+      <ul class="toc">
+        <li><a href="#dns-resolver">1 · Raw DNS Resolver from Scratch</a></li>
+        <li><a href="#dns-compression">2 · Name Compression &amp; Pointer Masking (0xC0)</a></li>
+        <li><a href="#dns-testing">3 · Edge Cases: NXDOMAIN, Timeouts, and Validation</a></li>
+        <li><a href="#vulnerable-target">4 · Building the Vulnerable Target (vuln.c)</a></li>
+        <li><a href="#calling-convention">5 · System V Calling Convention &amp; Register Exhaustion</a></li>
+        <li><a href="#buffering-deadlock">6 · Diagnosing the stdio Buffering Deadlock</a></li>
+        <li><a href="#pwntools-exploit">7 · Memory Leaks via Indexed Format Strings</a></li>
+        <li><a href="#debugging-notes">8 · Honest Debugging Lessons</a></li>
+      </ul>
+    </div>
+
+    <!-- 1. DNS Resolver -->
+    <div class="content-card" id="dns-resolver">
+      <h2>1 · Raw DNS Resolver from Scratch</h2>
+
+      <p>
+        I wanted to see how DNS packets are built at the byte level without having a library do it behind the scenes. In C, you would define a packed struct and cast pointers over a buffer. In Python, you can achieve the exact same control using <code>ctypes.BigEndianStructure</code> so that multi-byte fields are automatically encoded in network byte order.
+      </p>
+
+      <pre><code class="language-python">import ctypes
+
+class DNS_HDR(ctypes.BigEndianStructure):
+    _fields_ = [
+        ("ID", ctypes.c_ushort),
+        ("FLAGS", ctypes.c_ushort),
+        ("QDCOUNT", ctypes.c_ushort),
+        ("ANCOUNT", ctypes.c_ushort),
+        ("NSCOUNT", ctypes.c_ushort),
+        ("ARCOUNT", ctypes.c_ushort)
+    ]</code></pre>
+
+      <p>
+        For the query, the header flags are set to <code>0x0100</code> (standard query with recursion desired, <code>RD=1</code>). But the tricky part of building a DNS query is the question section (QNAME). You can't just send <code>"google.com"</code> as a normal string. DNS encodes domain names as a sequence of length-prefixed labels: length byte, followed by the label bytes, terminated with a null byte (<code>0x00</code>).
+      </p>
+
+      <p>
+        So <code>"google.com"</code> turns into <code>b"\x06google\x03com\x00"</code>. I wrote a manual encoder to convert domain strings into raw QNAME bytearrays:
+      </p>
+
+      <pre><code class="language-python">def qname_get(domain_name):
+    if domain_name.endswith("."):
+        qname = bytearray(len(domain_name.encode("ascii")) + 1)
+    else:
+        qname = bytearray(len(domain_name.encode("ascii")) + 2)
+    i = 0
+    for label in domain_name.split("."):
+        if len(label) == 0:
+            break
+        label_len = len(label.encode("ascii"))
+        qname[i] = label_len
+        i += 1
+        qname[i : i + label_len] = label.encode("ascii")
+        i += label_len
+    qname[i] = 0
+    return qname</code></pre>
+
+      <p>
+        After the QNAME, you append 2 bytes for QTYPE (<code>0x0001</code> for Type A) and 2 bytes for QCLASS (<code>0x0001</code> for Class IN). Then send it off via a standard UDP datagram socket to <code>8.8.8.8:53</code>.
+      </p>
+    </div>
+
+    <!-- 2. DNS Compression -->
+    <div class="content-card" id="dns-compression">
+      <h2>2 · Name Compression &amp; Pointer Masking (0xC0)</h2>
+
+      <p>
+        Sending the query is straightforward, but parsing the response is where DNS gets tricky because of RFC 1035 message compression. To save bandwidth, DNS responses don't repeat domain names. Instead, if a label begins with the two high bits set (<code>11xxxxxx</code> in binary, or <code>0xC0</code> as a mask), it indicates an offset pointer back to where the domain name was previously defined in the packet.
+      </p>
+
+      <div class="confusion-box">
+        <strong>the compression trap</strong>
+        If you assume every label is preceded by an ordinary length byte, your parser will blow up the moment it reads an answer record. A length of <code>0xC0</code> would look like a 192-byte label, which immediately runs past the packet buffer or triggers bounds checks. You have to check whether <code>(byte[i] &amp; 0xC0) == 0xC0</code>. If it is, the pointer is two bytes long (the 14 remaining bits give the offset), and you advance your parsing cursor by 2 bytes.
+      </div>
+
+      <pre><code class="language-python"># Walking past the question and answer names
+while i &lt; pkt_size and byte[i] != 0:
+    if (byte[i] &amp; 0xC0) == 0xC0:
+        # It's a compression pointer (2 bytes total)
+        i = i + 2
+        break
+    else:
+        if byte[i] &gt; 63:
+            return  # Invalid label length
+        else:
+            i = i + byte[i] + 1
+else:
+    i = i + 1</code></pre>
+
+      <p>
+        Once you walk past the question record (QNAME + 4 bytes for QTYPE/QCLASS) and the answer record header (NAME + TYPE + CLASS + TTL, totaling 10 bytes), you reach <code>RDLENGTH</code> (2 bytes) and then the actual <code>RDATA</code> payload. For an A record, <code>RDLENGTH</code> is 4 bytes, representing the 32-bit IPv4 address, which we format using <code>socket.inet_ntoa()</code>.
+      </p>
+    </div>
+
+    <!-- 3. DNS Testing -->
+    <div class="content-card" id="dns-testing">
+      <h2>3 · Edge Cases: NXDOMAIN, Timeouts, and Validation</h2>
+
+      <p>
+        I tested three specific failure and edge cases against Google's resolver (<code>8.8.8.8</code>):
+      </p>
+
+      <ol style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li><strong>Successful resolution</strong>: Resolving standard domains like <code>google.com</code> and checking that the returned IP matched.</li>
+        <li><strong>NXDOMAIN</strong>: Querying non-existent domains. The server returns a response with <code>ANCOUNT == 0</code> and an RCODE indicating non-existence. The parser checks <code>if hdr.ANCOUNT == 0: return</code> cleanly without crashing.</li>
+        <li><strong>Resolver timeout</strong>: Testing against an unreachable IP address to ensure timeout handling worked.</li>
+      </ol>
+
+      <div class="insight-box">
+        <strong>avoiding blanket exceptions</strong>
+        Instead of wrapping everything in a lazy <code>except Exception:</code> block, I set an explicit 10-second timeout on the socket (<code>sock.settimeout(10)</code>) and caught <code>socket.timeout</code> explicitly. That way, a genuine network timeout doesn't get masked as a parsing failure or code bug.
+      </div>
+    </div>
+
+    <!-- 4. Vulnerable Target -->
+    <div class="content-card" id="vulnerable-target">
+      <h2>4 · Building the Vulnerable Target (vuln.c)</h2>
+
+      <p>
+        The second part of the block was binary exploitation in Python. To understand format-string vulnerabilities and memory leaks, I wrote a minimal vulnerable program in C (<code>vunl.c</code>):
+      </p>
+
+      <pre><code class="language-c">#include &lt;stdio.h&gt;
+
+void vunl()
+{
+    char buf[64];
+    long secet = 0xdeadbeef;
+    printf("Buf: %p, Secret: %p\n", buf, &amp;secet);
+    fgets(buf, sizeof(buf), stdin);
+    printf(buf);  /* vulnerable: format string directly from user input */
+}
+
+int main()
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+    vunl();
+    return 0;
+}</code></pre>
+
+      <p>
+        The bug is on line 9: <code>printf(buf)</code> instead of <code>printf("%s", buf)</code>. If the input contains format specifiers like <code>%lx</code> or <code>%p</code>, <code>printf</code> interprets them as instructions to fetch and print arguments from memory according to the calling convention, even though no additional arguments were passed.
+      </p>
+    </div>
+
+    <!-- 5. Calling Convention -->
+    <div class="content-card" id="calling-convention">
+      <h2>5 · System V Calling Convention &amp; Register Exhaustion</h2>
+
+      <p>
+        To predict what <code>printf</code> actually prints, you have to know the x86-64 System V AMD64 ABI calling convention:
+      </p>
+
+      <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li>1st argument: <code>rdi</code> (the format string pointer itself)</li>
+        <li>2nd argument: <code>rsi</code></li>
+        <li>3rd argument: <code>rdx</code></li>
+        <li>4th argument: <code>rcx</code></li>
+        <li>5th argument: <code>r8</code></li>
+        <li>6th argument: <code>r9</code></li>
+        <li>7th argument and beyond: pushed onto the stack in reverse order</li>
+      </ul>
+
+      <p>
+        This means the first <strong>5 specifiers</strong> (positions 1 through 5) leak the contents of CPU registers (<code>rsi</code> through <code>r9</code>). They do not read the stack at all.
+      </p>
+
+      <div class="insight-box">
+        <strong>the register exhaustion threshold</strong>
+        Specifier 6 is the exact transition point where register arguments are exhausted and <code>printf</code> begins walking up the stack frame. Starting from the 6th position, you are leaking stack memory.
+      </div>
+    </div>
+
+    <!-- 6. stdio Buffering Deadlock -->
+    <div class="content-card" id="buffering-deadlock">
+      <h2>6 · Diagnosing the stdio Buffering Deadlock</h2>
+
+      <p>
+        When I first started writing the exploit script using <code>pwntools</code> (<code>p = process("./vunl")</code>), the script hung indefinitely. It would block waiting for output, but nothing was ever returned.
+      </p>
+
+      <p>
+        The cause was C's standard I/O buffering. By default, <code>stdout</code> is line-buffered when connected to an interactive terminal, but <strong>fully buffered</strong> when connected to a pipe (which is what <code>pwntools.process()</code> creates). Because the initial <code>printf</code> prompt didn't flush immediately, the data sat in libc's internal 4096-byte stdio buffer waiting for a newline or buffer overflow. Meanwhile, Python was waiting on <code>recvline()</code>, and the C process was waiting on <code>fgets()</code>. A classic bidirectional pipe deadlock.
+      </p>
+
+      <pre><code class="language-c">/* The fix: disable stdout buffering completely at program start */
+setvbuf(stdout, NULL, _IONBF, 0);</code></pre>
+
+      <p>
+        Alternatively, in targets where you cannot modify the source code, you can force interactive unbuffered mode using a pseudo-terminal (<code>process("./vunl", stdin=PTY, stdout=PTY)</code> in pwntools).
+      </p>
+    </div>
+
+    <!-- 7. pwntools Exploit & Memory Leaks -->
+    <div class="content-card" id="pwntools-exploit">
+      <h2>7 · Memory Leaks via Indexed Format Strings</h2>
+
+      <p>
+        Rather than manually typing out dozens of <code>%lx</code> tokens, I wrote an automated pwntools script that constructs indexed payloads using <code>%i$lx</code> or positional tags:
+      </p>
+
+      <pre><code class="language-python">from pwn import *
+
+# Construct indexed payload to inspect the first 15 positions
+parts = [f"{i}:%lx" for i in range(1, 16)]
+payload = " ".join(parts)
+
+p = process("./vunl")
+p.sendline(payload.encode())
+
+output = p.recvline().decode()
+print(output)
+
+p.close()</code></pre>
+
+      <p>
+        By printing the actual address of <code>buf</code> and <code>&amp;secet</code> in the target binary, I was able to cross-reference the leaked hex values against real runtime memory addresses.
+      </p>
+
+      <div class="insight-box">
+        <strong>address fingerprinting</strong>
+        On x86-64 Linux, different memory regions have distinct address prefixes:
+        <br />• Stack pointers typically start with <code>0x7ffd...</code> or <code>0x7fff...</code>
+        <br />• Shared libraries (libc, loader) and mmap regions start with <code>0x7f...</code>
+        <br />• Binary code and GOT slots (under PIE) start at lower bases like <code>0x55...</code> or <code>0x56...</code>
+        <br />By looking at the prefixes in the leak output, I could tell immediately whether a given slot was a register residue, an internal printf frame pointer, or a stack variable from <code>vunl()</code>.
+      </div>
+    </div>
+
+    <!-- 8. Debugging Lessons -->
+    <div class="content-card" id="debugging-notes">
+      <h2>8 · Honest Debugging Lessons</h2>
+
+      <p>
+        Looking back at where time was spent during this block, almost none of the issues were fundamental conceptual gaps. The real friction came from subtle boundary and control-flow mistakes around otherwise correct logic:
+      </p>
+
+      <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li>
+          <strong>Inverted comparison operator:</strong> In the domain name validation loop, I had a comparison flipped on the label length check, which silently rejected valid single-character domains during testing.
+        </li>
+        <li>
+          <strong>Short-circuit order bug:</strong> In the DNS packet parser, I had an expression that evaluated an array index before verifying whether the cursor had exceeded the packet buffer length. The guard condition was placed after the access rather than before it.
+        </li>
+        <li>
+          <strong>Shadowed built-in variable:</strong> Accidentally naming a loop variable <code>byte</code> and later attempting to use standard bytes functions, which caused strange <code>TypeError</code> exceptions further down the function.
+        </li>
+      </ul>
+
+      <p>
+        The takeaway was simple: guessing at bugs rarely works. Stepping through the execution path line by line with real inputs and printing intermediate buffer offsets caught every single one of these issues much faster than re-reading the code in circles.
+      </p>
+    </div>
+
+  </main>
+
+  <footer>
+    <p>© 2026 Kshitij Ban</p>
+    <p>
+      <a href="/about.html">About</a> ·
+      <a href="/contact.html">Contact</a> ·
+      <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+    </p>
+  </footer>
+
+</body>
+</html>
