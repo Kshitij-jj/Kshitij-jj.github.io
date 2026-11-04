@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The TCP State Machine — Kshitij Ban</title>
+  <meta name="description" content="Study summary and lab report from Block 1.5, Week 1: TCP state machine transitions, kernel implementation, flow/congestion control, security attack surfaces, and a loopback lab." />
+
+  <meta property="og:title" content="The TCP State Machine — Kshitij Ban" />
+  <meta property="og:description" content="Kernel mechanics of TCP: sequence/ack numbering, 3-way handshake queues, teardown transitions, TIME_WAIT vs CLOSE_WAIT, SYN cookies, RFC 5961 blind RST defense, and loopback verification." />
+  <meta property="og:url" content="https://kshitij-jj.github.io/writeups/systems/tcp-state-machine/" />
+  <meta property="og:type" content="article" />
+
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="../../../style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+
+  <style>
+    .meta {
+      color: var(--muted, #9ca3af);
+      font-size: 0.8rem;
+      margin-bottom: 6px;
+    }
+
+    .content-card + .content-card {
+      margin-top: 20px;
+    }
+
+    .content-card h2 {
+      color: var(--blue, #38bdf8);
+      font-size: 1.05rem;
+      margin-bottom: 14px;
+    }
+
+    .content-card p {
+      color: #d1d5db;
+      font-size: 0.92rem;
+      line-height: 1.8;
+      margin-bottom: 12px;
+    }
+
+    .content-card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .confusion-box {
+      border-left: 3px solid #f97316;
+      background: #1a1508;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #fbbf24;
+      line-height: 1.7;
+    }
+
+    .confusion-box strong {
+      color: #f97316;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .todo-box {
+      border-left: 3px solid #a855f7;
+      background: #12091a;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #c084fc;
+      line-height: 1.7;
+    }
+
+    .todo-box strong {
+      color: #a855f7;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .insight-box {
+      border-left: 3px solid #22c55e;
+      background: #081208;
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      color: #86efac;
+      line-height: 1.7;
+    }
+
+    .insight-box strong {
+      color: #22c55e;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .toc {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .toc li a {
+      color: var(--blue, #38bdf8);
+      font-size: 0.88rem;
+      text-decoration: none;
+    }
+
+    .toc li a:hover {
+      text-decoration: underline;
+    }
+
+    .toc li::before {
+      content: "→ ";
+      color: var(--muted, #9ca3af);
+    }
+
+    code {
+      background: #0f172a;
+      color: #22c55e;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.88em;
+      border: 1px solid #1f2937;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border: none;
+      font-size: inherit;
+    }
+
+    @media (max-width: 768px) {
+      .content-card { margin-left: 12px; margin-right: 12px; padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>The TCP State Machine</h1>
+    <p class="tagline">Notes &amp; Lab Report — Block 1.5, Week 1 (Systems Internals)</p>
+  </header>
+
+  <div class="back-wrap">
+    <a class="back" href="../../index.html">⬅ Back to Writeups</a>
+  </div>
+
+  <main class="content">
+
+    <!-- 1. Scope & Intro -->
+    <div class="content-card">
+      <p class="meta">November 2026 · Systems Internals / Networking</p>
+      <p>
+        Block 1.5 focuses on TCP, asynchronous I/O, and event-driven architecture across three weeks. This session covers Week 1: the TCP state machine, how the Linux kernel implements it under the hood, and the security properties that emerge from that design. Weeks 2 and 3 will tackle I/O multiplexing and epoll.
+      </p>
+      <p>
+        I spent this week tracing sequence numbers, the 3-way handshake, teardown transitions, sliding windows, flow and congestion control, SYN cookies, and blind RST mitigations. Then I built a minimal client/server setup in C to watch these transitions happen live on loopback using <code>tcpdump</code> and <code>ss -tan</code>.
+      </p>
+
+      <ul class="toc">
+        <li><a href="#mental-model">1 · Core Mental Model: State over Best-Effort IP</a></li>
+        <li><a href="#handshake">2 · The 3-Way Handshake &amp; Kernel Queues</a></li>
+        <li><a href="#teardown">3 · Teardown: TIME_WAIT, CLOSE_WAIT &amp; Orphans</a></li>
+        <li><a href="#flow-congestion">4 · Flow Control, Persist Timers &amp; Congestion</a></li>
+        <li><a href="#security">5 · Security Mechanics: SYN Cookies, ISNs &amp; RFC 5961</a></li>
+        <li><a href="#loopback-lab">6 · Loopback Lab: Observing Transitions in C</a></li>
+        <li><a href="#learning-log">7 · Mistakes Caught &amp; Corrected</a></li>
+      </ul>
+    </div>
+
+    <!-- 2. Core Mental Model -->
+    <div class="content-card" id="mental-model">
+      <h2>1 · Core Mental Model: State over Best-Effort IP</h2>
+
+      <p>
+        IP is best-effort by design: packets can get dropped, duplicated, delayed, delivered out of order, or corrupted. User applications want a reliable, ordered, bi-directional byte stream. TCP creates that abstraction out of nothing more than a small set of counters and shared state maintained by the kernel at both ends.
+      </p>
+
+      <p>
+        The mechanics boil down to a few fundamental rules:
+      </p>
+
+      <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li><strong>Every byte has a number:</strong> A segment's sequence number (<code>seq</code>) is the index of its first payload byte.</li>
+        <li><strong>Cumulative acknowledgments:</strong> The <code>ack</code> number tells the sender what byte the receiver expects next, meaning every single byte before that number has arrived safely.</li>
+        <li><strong>Retransmission buffer:</strong> The sender keeps unacknowledged bytes in its send buffer until an ACK moves past them. If a retransmit timer fires or three duplicate ACKs arrive (fast retransmit), it resends the missing data.</li>
+        <li><strong>Hole handling:</strong> Out-of-order segments are buffered in a kernel queue until the missing prefix arrives. In Linux (<code>include/linux/tcp.h</code>), this is <code>out_of_order_queue</code>, implemented as a red-black tree keyed by sequence number.</li>
+        <li><strong>Virtual byte consumption:</strong> SYN and FIN flags each consume exactly one sequence number, which is why their ACKs are <code>seq + 1</code>. A data segment containing <code>n</code> bytes consumes <code>n</code> sequence numbers, so its ACK is <code>seq + n</code>.</li>
+        <li><strong>Independent streams:</strong> Each direction is completely separate. Each side chooses its own Initial Sequence Number (ISN) independently.</li>
+      </ul>
+
+      <div class="insight-box">
+        <strong>kernel state anchors (struct tcp_sock)</strong>
+        In the Linux kernel, the core tracking variables live in <code>struct tcp_sock</code>:
+        <br />• <code>rcv_nxt</code>: Next byte expected from peer (the ACK number sent in outgoing segments).
+        <br />• <code>snd_una</code>: Oldest unacknowledged byte sent (left edge of the send window).
+        <br />• <code>snd_nxt</code>: Next byte to be sent.
+      </div>
+    </div>
+
+    <!-- 3. Handshake -->
+    <div class="content-card" id="handshake">
+      <h2>2 · The 3-Way Handshake &amp; Kernel Queues</h2>
+
+      <p>
+        The handshake synchronizes sequence numbers between client and server:
+      </p>
+
+      <pre><code class="language-text">Client (Active)                               Server (Passive)
+CLOSED                                        LISTEN
+  |--- SYN, seq=X --------------------------->|  -> SYN_RECV
+  |<-- SYN+ACK, seq=Y, ack=X+1 ---------------|
+  |--- ACK, ack=Y+1 -------------------------->|  -> ESTABLISHED
+SYN_SENT -> ESTABLISHED</code></pre>
+
+      <p>
+        The reason it takes three messages is mutual proof. Both endpoints need proof that the other side received its chosen ISN. The first two messages deliver the client's ISN and the server's ISN. But the third message is required to prove to the server that the client actually received <code>Y</code>. Without that final ACK, an attacker could spoof a SYN from an innocent IP, or a delayed duplicate SYN from an old connection could trick the server into allocating a live connection. With three steps, a stale SYN causes the unsuspecting client to reject the unexpected SYN+ACK with an RST.
+      </p>
+
+      <h3>Who actually does the work</h3>
+      <p>
+        One thing that took me a while to realize is that the handshake is driven entirely by the kernel, not by your userspace application code. Sockets and system calls merely interact with kernel queues:
+      </p>
+
+      <p>
+        When you call <code>listen(fd, backlog)</code>, the kernel puts the socket into <code>LISTEN</code> and creates two queues:
+      </p>
+      <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li><strong>SYN Queue (half-open):</strong> Holds connections in <code>SYN_RECV</code> that are waiting for the client's final ACK.</li>
+        <li><strong>Accept Queue (fully open):</strong> When the final ACK arrives, the kernel creates a new socket struct in <code>ESTABLISHED</code> and moves it to the accept queue.</li>
+      </ul>
+
+      <p>
+        Calling <code>accept()</code> does not participate in the network handshake at all. It simply dequeues an already-established connection and returns a new file descriptor for it. If the client sends data before the server calls <code>accept()</code>, that data is already sitting in the newly created socket's receive buffer in the kernel.
+      </p>
+
+      <div class="confusion-box">
+        <strong>file descriptor vs. kernel socket</strong>
+        A file descriptor is just an integer index into a process's private fd table. A socket is an internal kernel object with its own state machine, buffers, timers, and 4-tuple. After <code>accept()</code>, the server owns two sockets: the listening socket (still in <code>LISTEN</code>) and the accepted connection socket (in <code>ESTABLISHED</code>). Furthermore, the accepted socket is the server's own endpoint, not the client's. The client has its own separate socket. Because kernel sockets are reference-counted, calling <code>fork()</code> or <code>dup()</code> duplicates the descriptor, and the underlying socket only closes when every referring fd is closed.
+      </div>
+    </div>
+
+    <!-- 4. Teardown -->
+    <div class="content-card" id="teardown">
+      <h2>3 · Teardown: TIME_WAIT, CLOSE_WAIT &amp; Orphans</h2>
+
+      <p>
+        Closing a connection takes four steps because TCP is full-duplex. Sending a FIN only means "I have no more data to transmit." It does not mean "I refuse to receive data." Each direction must be shut down independently.
+      </p>
+
+      <pre><code class="language-text">Active Closer (calls close())                Passive Closer
+ESTABLISHED                                  ESTABLISHED
+  --(send FIN)--> FIN_WAIT_1
+                                               --(recv FIN / send ACK)--> CLOSE_WAIT
+  --(recv ACK)--> FIN_WAIT_2
+                                               --(app calls close() / send FIN)--> LAST_ACK
+  --(recv FIN / send ACK)--> TIME_WAIT
+                                               --(recv ACK)--> CLOSED
+  --(wait 2*MSL)--> CLOSED</code></pre>
+
+      <p>
+        A helpful rule of thumb for TCP state names: the name describes what that socket is currently waiting for. <code>SYN_SENT</code> waits for a SYN+ACK, <code>FIN_WAIT_1</code> waits for the ACK of its own FIN, <code>FIN_WAIT_2</code> waits for the peer's FIN, <code>CLOSE_WAIT</code> waits for the local application to call close, and <code>LAST_ACK</code> waits for the final ACK.
+      </p>
+
+      <h3>The purpose of TIME_WAIT</h3>
+      <p>
+        Whichever endpoint initiates the teardown (sends the first FIN) ends up in <code>TIME_WAIT</code>. It remains there for twice the Maximum Segment Lifetime (<code>2 * MSL</code>, fixed in Linux at 60 seconds by <code>TCP_TIMEWAIT_LEN</code>). It serves two critical purposes:
+      </p>
+      <ol style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li>
+          <strong>Repairing lost final ACKs:</strong> If the active closer's final ACK gets dropped in transit, the passive closer in <code>LAST_ACK</code> will time out and retransmit its FIN. If the active closer had destroyed its state immediately, it would respond to the retransmitted FIN with an RST, causing the peer's application to see a noisy <code>ECONNRESET</code> error instead of a clean EOF. By lingering in <code>TIME_WAIT</code>, it can absorb the retransmitted FIN, re-send the ACK, and restart the 2MSL timer.
+        </li>
+        <li>
+          <strong>Draining stale segments:</strong> It guarantees that any delayed packets floating through the internet from the old connection die before the same 4-tuple can be allocated to a new connection.
+        </li>
+      </ol>
+
+      <div class="insight-box">
+        <strong>TIME_WAIT vs. CLOSE_WAIT bugs</strong>
+        <br />• <strong>TIME_WAIT pile-ups</strong> are normal for an active closer. The main friction is port exhaustion or the server restart problem, where <code>bind()</code> fails with <code>EADDRINUSE</code> because an old socket is still lingering. Setting <code>SO_REUSEADDR</code> before <code>bind()</code> tells the kernel to allow binding to the port even if existing connections are in <code>TIME_WAIT</code>.
+        <br />• <strong>CLOSE_WAIT pile-ups</strong> are almost always an application bug. The kernel ACKed the peer's FIN, but it will never exit <code>CLOSE_WAIT</code> on its own because it assumes the local program might still want to write data. If the application forgets to call <code>close()</code>, the socket sits in <code>CLOSE_WAIT</code> forever, eventually leaking file descriptors until the process hits <code>EMFILE</code>.
+      </div>
+
+      <p>
+        If an application calls <code>close()</code> and exits while in <code>FIN_WAIT_2</code>, the socket becomes an orphan (no user space process owns the descriptor). Linux handles this by destroying orphaned <code>FIN_WAIT_2</code> sockets after <code>tcp_fin_timeout</code> (default 60 seconds) silently, with no packet sent.
+      </p>
+    </div>
+
+    <!-- 5. Flow & Congestion Control -->
+    <div class="content-card" id="flow-congestion">
+      <h2>4 · Flow Control, Persist Timers &amp; Congestion</h2>
+
+      <p>
+        TCP balances two distinct safety mechanisms: flow control (protecting the receiver from being overwhelmed) and congestion control (protecting the network from collapsing).
+      </p>
+
+      <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li>
+          <strong>Flow Control (rwnd):</strong> The receiver advertises its available buffer space in the TCP window field. The sender cannot have more unacknowledged bytes in flight than this advertised receive window.
+        </li>
+        <li>
+          <strong>Zero-Window and the Persist Timer:</strong> If the receiver's buffer fills up, it advertises a window of 0. Once the receiver's application reads data, it sends an ACK with a non-zero window. But if that ACK is lost, both sides would deadlock indefinitely: the receiver waiting for data, the sender waiting for a window update. To prevent this, the sender runs a persist timer (<code>tcp_probe_timer()</code> in <code>net/ipv4/tcp_timer.c</code>) that sends zero-window probes with exponential backoff, forcing the receiver to reply with its current window size.
+        </li>
+        <li>
+          <strong>Congestion Control (cwnd):</strong> The sender maintains a congestion window (<code>cwnd</code>). The amount of data allowed in flight is <code>min(rwnd, cwnd)</code>. During slow start, <code>cwnd</code> doubles every round trip until it hits <code>ssthresh</code>, after which it grows additively (one segment per RTT). Upon detecting loss, AIMD kicks in: three duplicate ACKs halve <code>cwnd</code> (multiplicative decrease), while an RTO timeout collapses <code>cwnd</code> back to 1 segment.
+        </li>
+      </ul>
+
+      <div class="confusion-box">
+        <strong>the flaw in classic loss-based congestion</strong>
+        Traditional algorithms (like Reno or Cubic) assume that packet loss equals network buffer congestion. On wireless networks (cellular, WiFi), packets are frequently lost due to physical radio interference or handoffs rather than saturated routers. Treating random wireless loss as congestion causes needless throughput collapses. Modern rate-based algorithms like BBR (Bottleneck Bandwidth and RTT) decouple pacing from loss altogether.
+      </div>
+    </div>
+
+    <!-- 6. Security -->
+    <div class="content-card" id="security">
+      <h2>5 · Security Mechanics: SYN Cookies, ISNs &amp; RFC 5961</h2>
+
+      <p>
+        Because the TCP handshake allocates state before authenticating identity, it exposes several attack surfaces:
+      </p>
+
+      <h3>SYN Floods and SYN Cookies</h3>
+      <p>
+        In a standard handshake, the server allocates a <code>struct request_sock</code> and sets up retransmit timers upon receiving a SYN. An attacker sending thousands of SYNs with spoofed IP addresses easily fills the SYN queue, causing the kernel to drop legitimate connection attempts.
+      </p>
+
+      <p>
+        <strong>SYN cookies</strong> solve this by storing absolutely nothing. When the SYN queue overflows, the kernel calculates the server's initial sequence number (<code>Y</code>) as a keyed cryptographic hash of the client IP, client port, server IP, server port, a secret key, and a coarse timestamp, with a few bits encoding the MSS. The server sends this <code>Y</code> in the SYN+ACK and discards all memory of the packet.
+      </p>
+
+      <p>
+        When the client returns the final ACK, it sends <code>ack = Y + 1</code>. The server subtracts 1, recomputes the cryptographic hash from the incoming 4-tuple, and checks if it matches. If it does, the connection is instantiated on the spot.
+      </p>
+
+      <div class="insight-box">
+        <strong>syn cookie limitations</strong>
+        SYN cookies prevent state exhaustion from blind off-path spoofers. However, they do not stop on-path attackers (who can observe <code>Y</code> directly), they break most negotiated TCP options (timestamps, window scaling, SACK) because there is nowhere to store them, and they cannot protect an overflowing accept queue (which is an application-level bottleneck).
+      </div>
+
+      <h3>ISN Randomization</h3>
+      <p>
+        If initial sequence numbers were predictable (such as incrementing counters), an off-path attacker could send a spoofed SYN to a server, predict what sequence number the server would pick in its SYN+ACK, and immediately forge the third ACK along with spoofed payload data (the classic Kevin Mitnick / Morris attack). Modern kernels (RFC 6528, <code>secure_tcp_seq()</code> in Linux) randomize ISNs using cryptographic hashing.
+      </p>
+
+      <h3>Blind RST Attacks and RFC 5961</h3>
+      <p>
+        A TCP RST segment aborts a connection immediately: no ACK is returned, unread data is dropped, and the connection transitions directly to <code>CLOSED</code>.
+      </p>
+
+      <p>
+        Historically, any RST whose sequence number fell anywhere within the receiver's current window was accepted. With a large receive window (e.g., 64 KB or window-scaled up to 1 GB), an off-path attacker guessing a 32-bit sequence number only needed a few thousand packets to blindly tear down long-lived sessions like BGP.
+      </p>
+
+      <p>
+        <strong>RFC 5961</strong> fixed this: an RST is only accepted immediately if its sequence number <em>exactly</em> equals <code>rcv_nxt</code>. If the sequence number is inside the window but doesn't match <code>rcv_nxt</code>, the kernel drops the packet and sends a <strong>Challenge ACK</strong> back to the authentic peer. A blind attacker cannot see or answer the challenge, while the real peer will reply with an exact RST if it truly intended to abort.
+      </p>
+    </div>
+
+    <!-- 7. Loopback Lab -->
+    <div class="content-card" id="loopback-lab">
+      <h2>6 · Loopback Lab: Observing Transitions in C</h2>
+
+      <p>
+        To prove these state transitions empirically, I wrote a minimal server (<code>srv.c</code>) and client (<code>client.c</code>) in C using only raw libc socket wrappers, running them across four tmux panes alongside <code>tcpdump -i lo -n -S 'tcp port 6666'</code> and <code>watch -n 1 ss -tan</code>.
+      </p>
+
+      <pre><code class="language-c">/* Server: reads data, then sleeps 90s without closing fd2 */
+int fd2 = accept(fd1, (struct sockaddr *)&amp;client_addr, &amp;len);
+while ((n = read(fd2, buf, sizeof(buf))) &gt; 0) {
+    printf("%s", buf);
+}
+printf("Sleeping 90s...\n");
+sleep(90);
+close(fd2);</code></pre>
+
+      <pre><code class="language-c">/* Client: sends 100 bytes, closes socket immediately, sleeps 60s */
+connect(fd1, (struct sockaddr *)&amp;serv_addr, len);
+write(fd1, "I'm client", 100);
+close(fd1);  /* triggers active close */
+printf("Sleeping 60s...\n");
+sleep(60);</code></pre>
+
+      <h3>Timeline of What Happened</h3>
+
+      <ol style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+        <li>
+          <strong>Handshake &amp; Data:</strong> The 3-way handshake ran cleanly. The client wrote 100 bytes, visible in tcpdump as a <code>P.</code> segment (PSH+ACK) with length 100, and the server ACKed it with <code>ack = seq + 100</code>.
+        </li>
+        <li>
+          <strong>Active Teardown:</strong> The client called <code>close(fd1)</code>, sending a FIN. The server kernel immediately responded with an ACK.
+        </li>
+        <li>
+          <strong>State Pause:</strong> Running <code>ss -tan</code> showed the client socket in <code>FIN-WAIT-2</code> and the server's accepted socket in <code>CLOSE-WAIT</code>, alongside the listening socket still in <code>LISTEN</code>.
+        </li>
+        <li>
+          <strong>Orphan Timer Expiration (~60s):</strong> Because the client process closed its fd, the socket was an orphan. Exactly 60 seconds later, the client row vanished from <code>ss -tan</code> with zero packets sent on the wire.
+        </li>
+        <li>
+          <strong>Server Process Exit (~90s):</strong> When the server process terminated, the kernel closed its leftover fd2. Because it was sitting in <code>CLOSE_WAIT</code>, the kernel sent a FIN to the client.
+        </li>
+        <li>
+          <strong>The RST Reply:</strong> The client kernel received the FIN on port 6666, but because its orphaned socket had already vanished 30 seconds earlier, the client kernel replied with an <code>RST</code>. In accordance with RFC 793, the RST's sequence number matched the ACK field of the FIN it was answering.
+        </li>
+        <li>
+          <strong>Teardown Complete:</strong> The server socket transitioned to <code>CLOSED</code>, and the listening socket disappeared cleanly without sending any packets.
+        </li>
+      </ol>
+    </div>
+
+    <!-- 8. Learning Log -->
+    <div class="content-card" id="learning-log">
+      <h2>7 · Mistakes Caught &amp; Corrected</h2>
+
+      <p>
+        Writing down the predictions beforehand and verifying them against the kernel caught several flawed mental models I had walking into this week:
+      </p>
+
+      <div class="todo-box">
+        <strong>learning log: errors caught during analysis</strong>
+        <ul style="margin:6px 0 0; padding-left:18px;">
+          <li>
+            <strong>Mistake:</strong> Assumed the file descriptor returned by <code>accept()</code> belonged to the client.<br />
+            <strong>Correction:</strong> It is the server's local handle for that connection. The client owns an entirely separate socket in its own kernel.
+          </li>
+          <li>
+            <strong>Mistake:</strong> Thought the <code>LISTEN</code> socket participates in teardown.<br />
+            <strong>Correction:</strong> The listening socket is completely untouched by individual connection closures.
+          </li>
+          <li>
+            <strong>Mistake:</strong> Assumed a socket in <code>CLOSE_WAIT</code> automatically moves to <code>LAST_ACK</code> after a timeout.<br />
+            <strong>Correction:</strong> The kernel never times out <code>CLOSE_WAIT</code>. Only the user application calling <code>close()</code> or process termination triggers the transition.
+          </li>
+          <li>
+            <strong>Mistake:</strong> Thought the client jumps straight to <code>TIME_WAIT</code> immediately upon calling <code>close()</code>.<br />
+            <strong>Correction:</strong> The active closer must transition through <code>FIN_WAIT_1</code> and <code>FIN_WAIT_2</code>, and only enters <code>TIME_WAIT</code> after receiving the peer's FIN.
+          </li>
+          <li>
+            <strong>Mistake:</strong> Drew <code>TIME_WAIT --(recv FIN)--> FIN_WAIT_2</code>.<br />
+            <strong>Correction:</strong> Receiving a retransmitted FIN in <code>TIME_WAIT</code> causes the kernel to re-send the ACK and restart the 2MSL timer; it stays in <code>TIME_WAIT</code>.
+          </li>
+          <li>
+            <strong>Mistake:</strong> Confused socket errors (<code>ECONNREFUSED</code> vs <code>ECONNRESET</code>).<br />
+            <strong>Correction:</strong> An RST on an established connection raises <code>ECONNRESET</code>. <code>ECONNREFUSED</code> only occurs when attempting to <code>connect()</code> to a port with no active listener.
+          </li>
+          <li>
+            <strong>Mistake:</strong> Believed SYN cookies were stored in a lightweight kernel table.<br />
+            <strong>Correction:</strong> SYN cookies are completely stateless; the state is embedded directly inside the 32-bit ISN.
+          </li>
+          <li>
+            <strong>Mistake:</strong> Used "process" and "socket" interchangeably.<br />
+            <strong>Correction:</strong> A process holds file descriptors. A socket is an independent kernel object governed by reference counts.
+          </li>
+        </ul>
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    <p>© 2026 Kshitij Ban</p>
+    <p>
+      <a href="/about.html">About</a> ·
+      <a href="/contact.html">Contact</a> ·
+      <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+    </p>
+  </footer>
+
+</body>
+</html>
