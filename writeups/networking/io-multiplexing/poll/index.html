@@ -3,22 +3,456 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Notes on the poll() system call for I/O multiplexing in C." />
-    <title>Poll Notes</title>
+    <meta
+      name="description"
+      content="Building a non-blocking echo server in C using poll() for I/O multiplexing — client state management, partial writes, and swap-with-last compaction."
+    />
+    <title>Non-Blocking Echo Server with poll() — Kshitij Ban</title>
+
+    <meta property="og:title" content="Non-Blocking Echo Server with poll() — Kshitij Ban" />
+    <meta
+      property="og:description"
+      content="Building a non-blocking echo server in C using poll() — buffer state transitions, handling partial writes, and array compaction."
+    />
+    <meta property="og:url" content="https://kshitij-jj.github.io/writeups/networking/io-multiplexing/poll/" />
+    <meta property="og:type" content="article" />
+
+    <link rel="icon" href="/favicon.ico" />
     <link rel="stylesheet" href="../../../../style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
+
+    <style>
+      .meta {
+        color: var(--muted, #9ca3af);
+        font-size: 0.8rem;
+        margin-bottom: 6px;
+      }
+
+      .content-card + .content-card {
+        margin-top: 20px;
+      }
+
+      .content-card h2 {
+        color: var(--blue, #38bdf8);
+        font-size: 1.05rem;
+        margin-bottom: 14px;
+      }
+
+      .content-card p {
+        color: #d1d5db;
+        font-size: 0.92rem;
+        line-height: 1.8;
+        margin-bottom: 12px;
+      }
+
+      .content-card p:last-child {
+        margin-bottom: 0;
+      }
+
+      .confusion-box {
+        border-left: 3px solid #f97316;
+        background: #1a1508;
+        padding: 10px 14px;
+        margin: 14px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.88rem;
+        color: #fbbf24;
+        line-height: 1.7;
+      }
+
+      .confusion-box strong {
+        color: #f97316;
+        display: block;
+        margin-bottom: 3px;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .insight-box {
+        border-left: 3px solid #22c55e;
+        background: #081208;
+        padding: 10px 14px;
+        margin: 14px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.88rem;
+        color: #86efac;
+        line-height: 1.7;
+      }
+
+      .insight-box strong {
+        color: #22c55e;
+        display: block;
+        margin-bottom: 3px;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .toc {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .toc li a {
+        color: var(--blue, #38bdf8);
+        font-size: 0.88rem;
+        text-decoration: none;
+      }
+
+      .toc li a:hover {
+        text-decoration: underline;
+      }
+
+      .toc li::before {
+        content: "→ ";
+        color: var(--muted, #9ca3af);
+      }
+
+      code {
+        background: #0f172a;
+        color: #22c55e;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 0.88em;
+        border: 1px solid #1f2937;
+      }
+
+      pre code {
+        background: transparent;
+        color: inherit;
+        padding: 0;
+        border: none;
+        font-size: inherit;
+      }
+
+      @media (max-width: 768px) {
+        .content-card { margin-left: 12px; margin-right: 12px; padding: 18px; }
+      }
+    </style>
   </head>
 
   <body>
-    <header class="topbar">
-      <h1>Poll Notes</h1>
-      <p class="tagline">Improvement over select for IO-Multiplexing.</p>
+    <header>
+      <h1>Non-Blocking Echo Server with poll()</h1>
+      <p class="tagline">I/O Multiplexing in C — State Transitions &amp; Array Compaction</p>
     </header>
 
-    <a class="back" href="../index.html">⬅ IO-Multiplexing</a>
+    <div class="back-wrap">
+      <a class="back" href="../index.html">⬅ Back to I/O Multiplexing</a>
+    </div>
 
-    <section class="card">
-      <h2>Status</h2>
-      <p>This section is currently under development.</p>
-    </section>
+    <main class="content">
+
+      <!-- Intro -->
+      <div class="content-card">
+        <p class="meta">November 2026 · Systems / Networking · <a href="https://github.com/Kshitij-jj/Accessories" target="_blank" style="color:#38bdf8;">GitHub Repo: Accessories</a></p>
+        <p>
+          This all started when I began digging into I/O multiplexing. By default, socket functions like <code>read()</code> and <code>accept()</code> are blocking. That means your thread just sits there waiting for the operation to complete before it can do anything else. When you are writing a network server that might handle hundreds or thousands of clients at the same time, having one idle or slow connection stall the whole process completely ruins responsiveness.
+        </p>
+        <p>
+          To solve that without spawning a heavy thread for every single socket, Linux gives us I/O multiplexing: <code>select()</code>, <code>poll()</code>, and <code>epoll()</code>. This project is built around <code>poll()</code>.
+        </p>
+
+        <ul class="toc">
+          <li><a href="#why-poll">1 · Why poll() over select()</a></li>
+          <li><a href="#the-challenge">2 · The "Simple" Echo Server Problem</a></li>
+          <li><a href="#client-struct">3 · Designing the Client State Struct</a></li>
+          <li><a href="#state-transitions">4 · Managing Read vs. Write State</a></li>
+          <li><a href="#accept-loop">5 · Non-Blocking Accept Loop</a></li>
+          <li><a href="#array-compaction">6 · Swap-with-Last Compaction &amp; Backwards Loop</a></li>
+          <li><a href="#edge-cases">7 · Corner Cases: SIGPIPE &amp; POLLNVAL</a></li>
+        </ul>
+      </div>
+
+      <!-- 1. Why poll -->
+      <div class="content-card" id="why-poll">
+        <h2>1 · Why poll() over select()</h2>
+
+        <p>
+          <code>select()</code> was the first standard way to multiplex sockets, but it has some annoying limitations. The most infamous is <code>FD_SETSIZE</code>, which caps the maximum file descriptor you can monitor to 1024. On top of that, <code>select()</code> modifies the bitmask in-place, meaning on every single iteration of your event loop, you have to re-copy and re-initialize the descriptors you care about.
+        </p>
+
+        <p>
+          <code>poll()</code> fixes both of those headaches. Instead of bitmasks, you pass a simple array of <code>struct pollfd</code>:
+        </p>
+
+        <pre><code class="language-c">struct pollfd {
+    int   fd;       /* file descriptor to watch */
+    short events;   /* bitmask of events we care about (POLLIN, POLLOUT) */
+    short revents;  /* bitmask of events returned by the kernel */
+};</code></pre>
+
+        <p>
+          There is no arbitrary 1024 limit because it's just an array whose size you control. And because <code>events</code> (what you request) and <code>revents</code> (what actually happened) are separate fields, the kernel never overwrites your configuration. You can leave the array in place across loop iterations and only inspect <code>revents</code>.
+        </p>
+      </div>
+
+      <!-- 2. The challenge -->
+      <div class="content-card" id="the-challenge">
+        <h2>2 · The "Simple" Echo Server Problem</h2>
+
+        <p>
+          To get comfortable with <code>poll()</code>, I wrote an echo server. On the surface, an echo server sounds like the simplest project imaginable: read whatever bytes the client sends to you, and write them right back out.
+        </p>
+
+        <p>
+          In a blocking single-client setup, that takes about ten lines of code. But doing it concurrently on a single thread with non-blocking sockets and <code>poll()</code> was actually quite a challenge. The moment sockets are non-blocking, every assumption about I/O breaks:
+        </p>
+
+        <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+          <li>A <code>read()</code> can return fewer bytes than you asked for, or return <code>EAGAIN</code> if no data has arrived yet.</li>
+          <li>A <code>write()</code> can return fewer bytes than you requested (a partial write) because the socket's kernel send buffer is full, and trying to write the rest immediately will block or drop data.</li>
+          <li>You cannot just sit in a <code>while</code> loop waiting for the write to finish, because that blocks all other connected clients.</li>
+        </ul>
+      </div>
+
+      <!-- 3. Client struct -->
+      <div class="content-card" id="client-struct">
+        <h2>3 · Designing the Client State Struct</h2>
+
+        <p>
+          The first problem was figuring out how to store client buffers and track progress without leaking memory or mixing up data. Each client needs its own buffer and offsets. So I created a dedicated <code>struct client</code>:
+        </p>
+
+        <pre><code class="language-c">#define MAX_CLIENTS 1020
+#define BUF_SPACE   4096
+
+struct client
+{
+    int fd;
+    char buf[BUF_SPACE];
+    size_t len;  /* bytes currently in buf          */
+    size_t sent; /* how many of those were written  */
+};
+
+struct pollfd fds[MAX_CLIENTS];
+struct client Clients[MAX_CLIENTS];
+nfds_t nfds = 0;</code></pre>
+
+        <p>
+          Here is why each field matters:
+        </p>
+        <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+          <li><code>fd</code>: The socket file descriptor associated with this client slot.</li>
+          <li><code>buf</code>: A 4 KB buffer holding the data received from the client.</li>
+          <li><code>len</code>: The total number of valid bytes currently sitting in <code>buf</code> waiting to be echoed.</li>
+          <li><code>sent</code>: How many of those <code>len</code> bytes have actually been written to the socket so far.</li>
+        </ul>
+
+        <div class="insight-box">
+          <strong>why tracking 'sent' is necessary</strong>
+          In non-blocking mode, if a client sends 4000 bytes and you call <code>write()</code>, the kernel might only accept 1500 bytes before filling the TCP socket send buffer. <code>sent</code> records that 1500 bytes went out, so the next time <code>poll()</code> tells us the socket is writable, we write starting at <code>buf + sent</code> for the remaining <code>len - sent</code> bytes instead of resending from byte 0.
+        </div>
+      </div>
+
+      <!-- 4. State transitions -->
+      <div class="content-card" id="state-transitions">
+        <h2>4 · Managing Read vs. Write State</h2>
+
+        <p>
+          After setting up the struct, the next step was managing whether each client is currently in a "read" state or a "write" state:
+        </p>
+
+        <p>
+          <strong>1. Read state:</strong> When the buffer is empty (<code>len == 0</code>), the client is waiting for new input. We set <code>fds[i].events = POLLIN</code> so the kernel notifies us when incoming data arrives.
+        </p>
+
+        <pre><code class="language-c">int on_client_readable(nfds_t i)
+{
+    ssize_t nr = read(fds[i].fd, Clients[i].buf, BUF_SPACE);
+    if (nr > 0)
+    {
+        Clients[i].len = (size_t)nr;
+        Clients[i].sent = 0;
+        fds[i].events = POLLOUT;  /* switch to write state */
+        return 0;
+    }
+    if (nr == 0)
+    {
+        return -1;  /* client disconnected cleanly */
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+    {
+        return 0;   /* no data ready right now, keep listening */
+    }
+    return -1;      /* read error */
+}</code></pre>
+
+        <p>
+          <strong>2. Write state:</strong> Once <code>read()</code> gives us bytes, we immediately flip <code>fds[i].events = POLLOUT</code>. We do not try to read anything more from this client until we have finished echoing back what we just received.
+        </p>
+
+        <pre><code class="language-c">int on_client_writable(nfds_t i)
+{
+    ssize_t nw = write(Clients[i].fd, Clients[i].buf + Clients[i].sent,
+                       Clients[i].len - Clients[i].sent);
+    if (nw >= 0)
+    {
+        Clients[i].sent += (size_t)nw;
+        if (Clients[i].sent == Clients[i].len)
+        {
+            /* entire buffer has been written back out */
+            Clients[i].len = 0;
+            Clients[i].sent = 0;
+            fds[i].events = POLLIN;  /* switch back to read state */
+        }
+        return 0;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+    {
+        return 0;
+    }
+    return -1;
+}</code></pre>
+
+        <p>
+          Once <code>Clients[i].sent == Clients[i].len</code>, the echo is complete. We reset both counters back to 0 and switch <code>events</code> back to <code>POLLIN</code>. This clean flip prevents busy-looping on <code>POLLOUT</code> when there is nothing to send.
+        </p>
+      </div>
+
+      <!-- 5. Accept loop -->
+      <div class="content-card" id="accept-loop">
+        <h2>5 · Non-Blocking Accept Loop</h2>
+
+        <p>
+          The listening socket is placed at <code>fds[0]</code> with <code>POLLIN</code>. When <code>fds[0].revents &amp; POLLIN</code> triggers, it means there is at least one new connection waiting in the accept queue.
+        </p>
+
+        <p>
+          Because multiple clients can connect in the same poll interval, calling <code>accept()</code> just once would leave the rest hanging until another connection arrives. So you have to drain the accept queue inside a non-blocking loop:
+        </p>
+
+        <pre><code class="language-c">void on_listner_ready(int listner)
+{
+    for (;;)
+    {
+        int fd = accept(listner, NULL, NULL);
+        if (fd == -1)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                return;  /* accept queue is completely drained */
+            }
+            if (errno == EINTR || errno == ECONNABORTED)
+            {
+                continue;
+            }
+            perror("accept");
+            return;
+        }
+        set_nonblocking(fd);
+        if (add_client(fd) == -1)
+        {
+            close(fd);
+        }
+    }
+}</code></pre>
+
+        <p>
+          Every accepted descriptor is immediately marked <code>O_NONBLOCK</code> with <code>fcntl()</code> and registered into our <code>fds</code> and <code>Clients</code> arrays.
+        </p>
+      </div>
+
+      <!-- 6. Array Compaction -->
+      <div class="content-card" id="array-compaction">
+        <h2>6 · Swap-with-Last Compaction &amp; Backwards Loop</h2>
+
+        <p>
+          <code>poll()</code> requires a dense array of size <code>nfds</code>. If client #12 in an array of 50 clients disconnects, leaving a hole is messy, and shifting every subsequent element left by one with <code>memmove</code> takes \(O(N)\) time.
+        </p>
+
+        <p>
+          The classic solution is <strong>swap-with-last</strong> removal: copy the very last element in the array into the slot of the dead client, then decrement <code>nfds</code>:
+        </p>
+
+        <pre><code class="language-c">void remove_client(nfds_t i)
+{
+    if (i == 0) return;  /* never remove the listening socket */
+
+    close(fds[i].fd);
+    if (i != nfds - 1)
+    {
+        fds[i] = fds[nfds - 1];
+        Clients[i] = Clients[nfds - 1];
+    }
+    --nfds;
+}</code></pre>
+
+        <div class="confusion-box">
+          <strong>the forward-loop indexing trap</strong>
+          If you iterate forward (<code>for (int i = 1; i &lt; nfds; i++)</code>) and remove client <code>i</code>, whatever client was at the end of the array is swapped into slot <code>i</code>. On the next iteration, <code>i</code> increments to <code>i + 1</code>, which completely skips checking the newly-swapped client in this turn!
+        </div>
+
+        <p>
+          The fix is simple once you realize it: iterate through the clients <strong>backwards</strong>:
+        </p>
+
+        <pre><code class="language-c">for (int i = (int)nfds - 1; i > 0; i--)
+{
+    if (fds[i].revents == 0) continue;
+
+    int dead = 0;
+    if (fds[i].revents &amp; POLLNVAL)
+        dead = 1;
+    else if (fds[i].events &amp; POLLOUT)
+        dead = (on_client_writable((nfds_t)i) == -1);
+    else
+        dead = (on_client_readable((nfds_t)i) == -1);
+
+    if (dead)
+    {
+        remove_client((nfds_t)i);
+    }
+}</code></pre>
+
+        <p>
+          When you iterate backwards, removing slot <code>i</code> replaces it with something from the tail that has either already been processed or was the item being dropped. The elements before it (which haven't been visited yet) remain completely untouched.
+        </p>
+      </div>
+
+      <!-- 7. Edge cases -->
+      <div class="content-card" id="edge-cases">
+        <h2>7 · Corner Cases: SIGPIPE &amp; POLLNVAL</h2>
+
+        <p>
+          A couple of Unix networking quirks had to be handled explicitly:
+        </p>
+
+        <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+          <li>
+            <strong><code>signal(SIGPIPE, SIG_IGN)</code>:</strong> If a client unexpectedly closes their connection while the server is trying to <code>write()</code> to it, the kernel's default behavior is to send a <code>SIGPIPE</code> signal to your process. That kills the whole server instantly without a traceback. Calling <code>signal(SIGPIPE, SIG_IGN)</code> at startup makes the <code>write()</code> call return <code>-1</code> with <code>errno == EPIPE</code> instead, allowing the server to clean up the client and keep running.
+          </li>
+          <li>
+            <strong><code>POLLNVAL</code> handling:</strong> If a file descriptor is closed out from under the poll set or is somehow invalid, <code>poll()</code> flags <code>POLLNVAL</code> in <code>revents</code>. The loop checks for this explicitly and purges the slot immediately.
+          </li>
+        </ul>
+
+        <div class="insight-box">
+          <strong>source code</strong>
+          The full C implementation (<code>poll.c</code>) is committed and tracked in my GitHub repository:
+          <br /><a href="https://github.com/Kshitij-jj/Accessories" target="_blank" style="color:#38bdf8; font-weight:500;">github.com/Kshitij-jj/Accessories</a>
+        </div>
+      </div>
+
+    </main>
+
+    <footer>
+      <p>© 2026 Kshitij Ban</p>
+      <p>
+        <a href="../../../../about.html">About</a> ·
+        <a href="../../../../contact.html">Contact</a> ·
+        <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+      </p>
+    </footer>
   </body>
 </html>
