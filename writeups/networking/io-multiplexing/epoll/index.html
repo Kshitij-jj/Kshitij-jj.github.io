@@ -155,7 +155,7 @@
 
       <!-- Intro -->
       <div class="content-card">
-        <p class="meta">November 2026 · Systems / Networking</p>
+        <p class="meta">November 2026 · Systems / Networking · <a href="https://github.com/Kshitij-jj/Accessories" target="_blank" style="color:#38bdf8;">GitHub Repo: Accessories</a></p>
         <p>
           After writing the echo server with <code>poll()</code>, the next logical step was moving to <code>epoll()</code>. While <code>poll()</code> got the job done, it had a few drawbacks that started to become obvious once I wanted the server to scale cleanly.
         </p>
@@ -351,6 +351,12 @@ for (;;)
         <div class="insight-box">
           <strong>takeaway</strong>
           Moving from <code>poll()</code> to <code>epoll()</code> cut down on all the manual bookkeeping. We got rid of the fixed static client arrays, eliminated the swap-with-last array compaction logic, and only deal with sockets that have real activity.
+        </div>
+
+        <div class="insight-box">
+          <strong>source code</strong>
+          The complete implementation (<code>echo_server_using_epoll.c</code>) is available in my GitHub repository:
+          <br /><a href="https://github.com/Kshitij-jj/Accessories" target="_blank" style="color:#38bdf8; font-weight:500;">github.com/Kshitij-jj/Accessories</a>
         </div>
       </div>
 
