@@ -3,22 +3,366 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Notes on the epoll API for scalable I/O multiplexing in C." />
-    <title>epoll</title>
+    <meta
+      name="description"
+      content="Moving from poll() to epoll() in C — building a level-triggered non-blocking echo server that scales well and saves memory."
+    />
+    <title>Scalable Echo Server with epoll() — Kshitij Ban</title>
+
+    <meta property="og:title" content="Scalable Echo Server with epoll() — Kshitij Ban" />
+    <meta
+      property="og:description"
+      content="Moving from poll() to epoll() in C — level-triggered events, per-client heap state with data.ptr, and cleaner socket lifecycle."
+    />
+    <meta property="og:url" content="https://kshitij-jj.github.io/writeups/networking/io-multiplexing/epoll/" />
+    <meta property="og:type" content="article" />
+
+    <link rel="icon" href="/favicon.ico" />
     <link rel="stylesheet" href="../../../../style.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
+
+    <style>
+      .meta {
+        color: var(--muted, #9ca3af);
+        font-size: 0.8rem;
+        margin-bottom: 6px;
+      }
+
+      .content-card + .content-card {
+        margin-top: 20px;
+      }
+
+      .content-card h2 {
+        color: var(--blue, #38bdf8);
+        font-size: 1.05rem;
+        margin-bottom: 14px;
+      }
+
+      .content-card p {
+        color: #d1d5db;
+        font-size: 0.92rem;
+        line-height: 1.8;
+        margin-bottom: 12px;
+      }
+
+      .content-card p:last-child {
+        margin-bottom: 0;
+      }
+
+      .confusion-box {
+        border-left: 3px solid #f97316;
+        background: #1a1508;
+        padding: 10px 14px;
+        margin: 14px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.88rem;
+        color: #fbbf24;
+        line-height: 1.7;
+      }
+
+      .confusion-box strong {
+        color: #f97316;
+        display: block;
+        margin-bottom: 3px;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .insight-box {
+        border-left: 3px solid #22c55e;
+        background: #081208;
+        padding: 10px 14px;
+        margin: 14px 0;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.88rem;
+        color: #86efac;
+        line-height: 1.7;
+      }
+
+      .insight-box strong {
+        color: #22c55e;
+        display: block;
+        margin-bottom: 3px;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .toc {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .toc li a {
+        color: var(--blue, #38bdf8);
+        font-size: 0.88rem;
+        text-decoration: none;
+      }
+
+      .toc li a:hover {
+        text-decoration: underline;
+      }
+
+      .toc li::before {
+        content: "→ ";
+        color: var(--muted, #9ca3af);
+      }
+
+      code {
+        background: #0f172a;
+        color: #22c55e;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 0.88em;
+        border: 1px solid #1f2937;
+      }
+
+      pre code {
+        background: transparent;
+        color: inherit;
+        padding: 0;
+        border: none;
+        font-size: inherit;
+      }
+
+      @media (max-width: 768px) {
+        .content-card { margin-left: 12px; margin-right: 12px; padding: 18px; }
+      }
+    </style>
   </head>
 
   <body>
-    <header class="topbar">
-      <h1>Epoll</h1>
-      <p class="tagline">Modern technique for IO-Multiplexing.</p>
+    <header>
+      <h1>Scalable Echo Server with epoll()</h1>
+      <p class="tagline">Moving from poll() to epoll() — Level-Triggered I/O Multiplexing in C</p>
     </header>
 
-    <a class="back" href="../index.html">⬅ I/O Multiplexing</a>
+    <div class="back-wrap">
+      <a class="back" href="../index.html">⬅ Back to I/O Multiplexing</a>
+    </div>
 
-    <section class="card">
-      <h2>Status</h2>
-      <p>This section is currently under development.</p>
-    </section>
+    <main class="content">
+
+      <!-- Intro -->
+      <div class="content-card">
+        <p class="meta">November 2026 · Systems / Networking</p>
+        <p>
+          After writing the echo server with <code>poll()</code>, the next logical step was moving to <code>epoll()</code>. While <code>poll()</code> got the job done, it had a few drawbacks that started to become obvious once I wanted the server to scale cleanly.
+        </p>
+        <p>
+          With <code>poll()</code>, I had to keep a giant fixed array of file descriptors and client buffers in memory, pass the entire array to the kernel on every single turn, and then loop through the whole thing to check which sockets had events. With <code>epoll()</code>, the kernel maintains the interest list for you. It saves memory because you only allocate what you actually use, and it scales way better because <code>epoll_wait()</code> only hands back the descriptors that are actually ready.
+        </p>
+
+        <ul class="toc">
+          <li><a href="#level-triggered">1 · Level-Triggered by Default</a></li>
+          <li><a href="#client-state">2 · Attaching Client State via data.ptr</a></li>
+          <li><a href="#state-transitions">3 · State Transitions: EPOLLIN and EPOLLOUT</a></li>
+          <li><a href="#no-compaction">4 · No More Array Compaction</a></li>
+          <li><a href="#event-loop">5 · The Event Loop &amp; Listener Handling</a></li>
+        </ul>
+      </div>
+
+      <!-- 1. Level-Triggered -->
+      <div class="content-card" id="level-triggered">
+        <h2>1 · Level-Triggered by Default</h2>
+
+        <p>
+          By default, <code>epoll</code> works in level-triggered mode, so this echo server is also level-triggered.
+        </p>
+
+        <p>
+          In simple terms, level-triggered means that as long as a socket has data ready to be read, or buffer space ready to be written to, <code>epoll_wait()</code> will keep telling you about it every time you call it. You don't have to read every last byte out of the socket in one single frantic loop to avoid missing events (which is what edge-triggered mode forces you to do).
+        </p>
+
+        <p>
+          That keeps the program flow much simpler and less prone to subtle deadlocks, while still giving us the speed benefits of epoll.
+        </p>
+      </div>
+
+      <!-- 2. Client State -->
+      <div class="content-card" id="client-state">
+        <h2>2 · Attaching Client State via data.ptr</h2>
+
+        <p>
+          One of the biggest improvements over my <code>poll()</code> server was how client memory is managed. In <code>poll.c</code>, I had to allocate fixed arrays upfront like <code>Clients[MAX_CLIENTS]</code> and keep them synced with <code>fds[MAX_CLIENTS]</code>.
+        </p>
+
+        <p>
+          With <code>epoll</code>, the event structure has a union called <code>epoll_data_t</code> which includes a void pointer (<code>data.ptr</code>). That means whenever a new client connects, I can just allocate a small <code>client</code> struct on the heap and attach it directly to the socket event:
+        </p>
+
+        <pre><code class="language-c">#define BUF_SPACE 1024
+
+typedef struct
+{
+    int fd;
+    char buf[BUF_SPACE];
+    size_t len;  /* bytes currently in buf */
+    size_t sent; /* how many of those were written */
+} client;
+
+int add_to_epoll_instance(int epfd, int fd, uint32_t event)
+{
+    struct epoll_event revent;
+    revent.events = event;
+
+    client *tmp = malloc(sizeof(client));
+    if (tmp == NULL) return -1;
+
+    tmp->fd = fd;
+    tmp->len = 0;
+    tmp->sent = 0;
+    revent.data.ptr = tmp;  /* store pointer directly in epoll */
+
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &revent) == -1)
+    {
+        free(tmp);
+        return -1;
+    }
+    return 0;
+}</code></pre>
+
+        <p>
+          When <code>epoll_wait()</code> returns, <code>events[i].data.ptr</code> gives me the exact <code>client*</code> pointer right away. There's no need to search through an array or maintain lookup tables.
+        </p>
+      </div>
+
+      <!-- 3. State Transitions -->
+      <div class="content-card" id="state-transitions">
+        <h2>3 · State Transitions: EPOLLIN and EPOLLOUT</h2>
+
+        <p>
+          Because epoll is level-triggered, we have to be careful with <code>EPOLLOUT</code>. Sockets are almost always writable as long as their kernel send buffers aren't full. If you leave <code>EPOLLOUT</code> enabled when you have nothing to send, <code>epoll_wait()</code> will wake up constantly in a busy loop.
+        </p>
+
+        <p>
+          So we flip the socket's state back and forth using <code>epoll_ctl(..., EPOLL_CTL_MOD, ...)</code>:
+        </p>
+
+        <pre><code class="language-c">int change_state(int epfd, client *c, uint32_t event)
+{
+    struct epoll_event revent;
+    revent.events = event;
+    revent.data.ptr = c;
+    return epoll_ctl(epfd, EPOLL_CTL_MOD, c->fd, &revent);
+}</code></pre>
+
+        <p>
+          The flow goes like this:
+        </p>
+        <ul style="color:#d1d5db; font-size:0.92rem; line-height:1.8; padding-left:20px; margin-bottom:14px;">
+          <li>When a client first connects, it starts in <code>EPOLLIN</code> mode.</li>
+          <li>When data arrives, <code>read()</code> fills the buffer up to <code>c->len</code>. Once we have bytes to echo back, we switch the socket to <code>EPOLLOUT</code>.</li>
+          <li>In <code>EPOLLOUT</code> mode, <code>write()</code> writes out <code>c->len - c->sent</code> bytes. If it only writes part of it, <code>c->sent</code> tracks where we left off.</li>
+          <li>Once <code>c->sent == c->len</code>, the whole message has been echoed. We reset <code>sent = 0</code> and <code>len = 0</code>, and switch the socket back to <code>EPOLLIN</code> so it waits quietly for the next message.</li>
+        </ul>
+      </div>
+
+      <!-- 4. No Compaction -->
+      <div class="content-card" id="no-compaction">
+        <h2>4 · No More Array Compaction</h2>
+
+        <p>
+          In <code>poll.c</code>, whenever a client disconnected, I had to swap the last element of the array into the slot of the dead client and walk backwards through the loop so indices wouldn't get skipped.
+        </p>
+
+        <p>
+          With <code>epoll</code>, that whole headache disappears. Since each client's state is its own separate heap object referenced by <code>data.ptr</code>, removing a disconnected client is just three lines:
+        </p>
+
+        <pre><code class="language-c">int remove_from_epoll_instance(int epfd, client *c)
+{
+    int res = epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL);
+    close(c->fd);
+    free(c);
+    return res;
+}</code></pre>
+
+        <p>
+          The kernel unregisters the socket from its internal list, the file descriptor is closed, and we free the <code>client</code> memory. No arrays to shift, no elements to swap.
+        </p>
+      </div>
+
+      <!-- 5. Event Loop -->
+      <div class="content-card" id="event-loop">
+        <h2>5 · The Event Loop &amp; Listener Handling</h2>
+
+        <p>
+          The main loop waits on <code>epoll_wait()</code> and iterates only over the events that actually fired:
+        </p>
+
+        <pre><code class="language-c">struct epoll_event events[MAX_SERVICE];
+
+for (;;)
+{
+    int m = epoll_wait(epfd, events, MAX_SERVICE, -1);
+    if (m == -1) ml_err_exit("EPOLL_WAIT: ");
+
+    for (int i = 0; i < m; i++)
+    {
+        client *c = (client *)events[i].data.ptr;
+
+        /* If the listener is ready, accept new connections */
+        if (c->fd == listner_fd)
+        {
+            process_listner(epfd, listner_fd);
+            continue;
+        }
+
+        /* Handle errors or hang-ups */
+        if ((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP))
+        {
+            remove_from_epoll_instance(epfd, c);
+            continue;
+        }
+
+        /* Read ready */
+        if (events[i].events & EPOLLIN)
+        {
+            int n = process_client_for_reading(c);
+            if (n < 0) remove_from_epoll_instance(epfd, c);
+            else if (n > 0) change_state(epfd, c, EPOLLOUT);
+        }
+
+        /* Write ready */
+        if (events[i].events & EPOLLOUT)
+        {
+            int res = process_client_for_writing(c);
+            if (res < 0) remove_from_epoll_instance(epfd, c);
+            else if (res == 2) change_state(epfd, c, EPOLLIN);
+        }
+    }
+}</code></pre>
+
+        <p>
+          When the listener is ready, <code>process_listner()</code> drains all incoming connections in a loop until <code>accept()</code> returns <code>EAGAIN</code> or <code>EWOULDBLOCK</code>, marks each new socket as non-blocking with <code>fcntl()</code>, and adds it to the epoll instance.
+        </p>
+
+        <div class="insight-box">
+          <strong>takeaway</strong>
+          Moving from <code>poll()</code> to <code>epoll()</code> cut down on all the manual bookkeeping. We got rid of the fixed static client arrays, eliminated the swap-with-last array compaction logic, and only deal with sockets that have real activity.
+        </div>
+      </div>
+
+    </main>
+
+    <footer>
+      <p>© 2026 Kshitij Ban</p>
+      <p>
+        <a href="../../../../about.html">About</a> ·
+        <a href="../../../../contact.html">Contact</a> ·
+        <a href="https://github.com/Kshitij-jj" target="_blank">GitHub</a>
+      </p>
+    </footer>
   </body>
 </html>
